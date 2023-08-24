@@ -2,120 +2,161 @@ import os
 import sys
 import time
 import json
+import boto3
+import datetime
+import hashlib
 import logging
-import numpy as np
-import boto3, json
-
-from langchain.document_loaders import S3DirectoryLoader
-from langchain.vectorstores import OpenSearchVectorSearch
-from sm_utils import create_sagemaker_embeddings_from_js_model
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from requests_aws4auth import AWS4Auth
-from aos_utils import OpenSearchClient
-
-# global constants
-MAX_FILE_SIZE = 1024*1024*100 # 100MB
-MAX_OS_DOCS_PER_PUT = 500
-CHUNK_SIZE_FOR_DOC_SPLIT = 600
-CHUNK_OVERLAP_FOR_DOC_SPLIT = 20
+from opensearchpy import OpenSearch, RequestsHttpConnection, AWSV4SignerAuth, helpers
 
 logger = logging.getLogger()
-logging.basicConfig(format='%(asctime)s,%(module)s,%(processName)s,%(levelname)s,%(message)s', level=logging.INFO, stream=sys.stderr)
 
 # fetch all the environment variables
 _document_bucket = os.environ.get('document_bucket')
-_embeddings_model_endpoint_name = os.environ.get('embeddings_model_endpoint_name')
 _opensearch_cluster_domain = os.environ.get('opensearch_cluster_domain')
 
 s3 = boto3.resource('s3')
 aws_region = boto3.Session().region_name
-document_bucket = s3.Bucket(_document_bucket)
 credentials = boto3.Session().get_credentials()
-awsauth = AWS4Auth(credentials.access_key, credentials.secret_key, aws_region, 'es', session_token=credentials.token)
+auth = AWSV4SignerAuth(credentials, aws_region)
 
-def process_shard(shard, embeddings_model_endpoint_name, aws_region, os_index_name, os_domain_ep, os_http_auth) -> int: 
-    logger.info(f'Starting process_shard of {len(shard)} chunks.')
-    st = time.time()
-    embeddings = create_sagemaker_embeddings_from_js_model(embeddings_model_endpoint_name, aws_region)
-    docsearch = OpenSearchVectorSearch(index_name=os_index_name,
-                                       embedding_function=embeddings,
-                                       opensearch_url=os_domain_ep,
-                                       http_auth=os_http_auth)    
-    docsearch.add_documents(documents=shard)
-    et = time.time() - st
-    logger.info(f'Shard completed in {et} seconds.')
-    return 0
+index_body = {
+    "settings" : {
+        "index":{
+            "number_of_shards" : 1,
+            "number_of_replicas" : 0,
+            "knn": "true",
+            "knn.algo_param.ef_search": 32
+        }
+    },
+    "mappings": {
+        "properties": {
+            "publish_date" : {
+                "type": "date",
+                "format": "yyyy-MM-dd HH:mm:ss"
+            },
+            "idx" : {
+                "type": "integer"
+            },
+            "doc_type" : {
+                "type" : "Sentence"
+            },
+            "doc": {
+                "type": "text",
+                "analyzer": "ik_max_word",
+                "search_analyzer": "ik_smart"
+            },
+            "content": {
+                "type": "text",
+                "analyzer": "ik_max_word",
+                "search_analyzer": "ik_smart"
+            },
+            "doc_title": {
+                "type": "keyword"
+            },
+            "doc_category": {
+                "type": "keyword"
+            },
+            "embedding": {
+                "type": "knn_vector",
+                "dimension": 1536,
+                "method": {
+                    "name": "hnsw",
+                    "space_type": "cosinesimil",
+                    "engine": "nmslib",
+                    "parameters": {
+                        "ef_construction": 512,
+                        "m": 32
+                    }
+                }            
+            }
+        }
+    }
+}
 
+# AOS_ENDPOINT = "vpc-domain66ac69e0-s8fhzjmrdeuy-ylxlocb22mslvy4ko2owavcwli.us-west-2.es.amazonaws.com"
+# REGION = "us-west-2"
+# INDEX_NAME = 'chatbot-index'
+
+def load_content_json_from_s3(bucket, object_key):
+    """
+    Load json content from s3
+    """
+
+    obj = s3.Object(bucket,object_key)
+    file_content = obj.get()['Body'].read()
+    
+    json_content = json.loads(file_content)
+    
+    return json_content
+
+def iterate_paragraph(json_content, object_key, index_name):
+    """
+    Iterate over the paragraphs in the json content and yield a document for each paragraph
+    """
+    doc_title = object_key
+
+    publish_date = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    for sent_id, sent in enumerate(json_content):
+        paragraph_content = sent[0]
+        embedding = sent[1]
+        document = { "publish_date": publish_date, "idx":sent_id, "doc" : paragraph_content, "doc_type" : "Sentence", "content" : paragraph_content, "doc_title": doc_title, "doc_category": "", "embedding" : embedding}
+        yield {"_index": index_name, "_source": document, "_id": hashlib.md5(str(document).encode('utf-8')).hexdigest()}
+
+
+def WriteVecIndexToAOS(bucket, object_key, aos_endpoint, index_name):
+    """
+    Write the vector index to aos cluster
+    """
+
+    try:
+        file_content = load_content_json_from_s3(bucket, object_key)
+
+        client = OpenSearch(
+            hosts = [{'host': aos_endpoint, 'port': 443}],
+            http_auth = auth,
+            use_ssl = True,
+            verify_certs = True,
+            connection_class = RequestsHttpConnection
+        )
+    except Exception as e:
+        print(f"There was an error when connecting to aos cluster, Exception: {str(e)}")
+        return '' 
+
+    try:
+        response = client.indices.create(index_name)
+        print('\nCreating index:')
+        print(response)
+    except Exception as e:
+        # index_name already exists
+        client.indices.delete(index = index_name)
+        response = client.indices.create(index_name)
+        print('\nCreating index:')
+        print(response)
+
+    try:
+        gen_aos_record_func = iterate_paragraph(file_content, object_key, index_name)
+
+        response = helpers.bulk(client, gen_aos_record_func)
+        return response
+    
+    except Exception as e:
+        print(f"There was an error when ingest:{object_key} to aos cluster, Exception: {str(e)}")
+        return '' 
+    
 def lambda_handler(event, context):
+    # TODO implement
     request_timestamp = time.time()
     logger.info(f'request_timestamp :{request_timestamp}')
     logger.info(f"event:{event}")
     logger.info(f"context:{context}")
+
     # parse aos endpoint from event
     index_name = event['aos_index']
-    aos_client = OpenSearchClient(_opensearch_cluster_domain)
+    object_key = event['object_key']
 
-    # iterate all files within specific s3 prefix in bucket llm-bot-documents and print out file number and total size
-    prefix = event['document_prefix']
-    total_size = 0
-    total_files = 0
-    for obj in document_bucket.objects.filter(Prefix=prefix):
-        total_files += 1
-        total_size += obj.size
-    logger.info(f'total_files:{total_files}, total_size:{total_size}')
-
-    # raise error and return if the total size is larger than 100MB
-    if total_size > MAX_FILE_SIZE:
-        raise Exception(f'total_size:{total_size} is larger than {MAX_FILE_SIZE}')
-
-    loader = S3DirectoryLoader(_document_bucket, prefix=prefix)
-    text_splitter = RecursiveCharacterTextSplitter(
-        # Set a really small chunk size, just to show.
-        chunk_size = CHUNK_SIZE_FOR_DOC_SPLIT,
-        chunk_overlap = CHUNK_OVERLAP_FOR_DOC_SPLIT,
-        length_function = len,
-    )
-
-    # split all docs into chunks
-    st = time.time()
-    logger.info('Loading documents ...')
-    docs = loader.load()
-
-    # add a custom metadata field, timestamp and embeddings_model
-    for doc in docs:
-        doc.metadata['timestamp'] = time.time()
-        doc.metadata['embeddings_model'] = _embeddings_model_endpoint_name
-    chunks = text_splitter.create_documents([doc.page_content for doc in docs], metadatas=[doc.metadata for doc in docs])
-    et = time.time() - st
-    logger.info(f'Time taken: {et} seconds. {len(chunks)} chunks generated') 
-
-    st = time.time()
-    db_shards = (len(chunks) // MAX_OS_DOCS_PER_PUT) + 1
-    logger.info(f'Loading chunks into vector store ... using {db_shards} shards') 
-    shards = np.array_split(chunks, db_shards)
-
-    exists = aos_client.indices.exists(index_name)
-    logger.info(f"index_name={index_name}, exists={exists}")
-    
-    embeddings = create_sagemaker_embeddings_from_js_model(_embeddings_model_endpoint_name, aws_region)
-
-    docsearch = OpenSearchVectorSearch.from_documents(index_name = index_name,
-                                                        documents = shards[0],
-                                                        embedding = embeddings,
-                                                        opensearch_url = _opensearch_cluster_domain,
-                                                        http_auth = awsauth)
-    shard_start_index = 1  
-    process_shard(shards[shard_start_index:], _embeddings_model_endpoint_name, aws_region, index_name, _opensearch_cluster_domain, awsauth)
-
-    et = time.time() - st
-    logger.info(f'Time taken: {et} seconds. all shards processed')
-
+    WriteVecIndexToAOS(_document_bucket, object_key, aos_endpoint=_opensearch_cluster_domain, index_name=index_name)
     return {
         'statusCode': 200,
-        'headers': {'Content-Type': 'application/json'},
-        'body': json.dumps({
-            "created": request_timestamp,
-            "model": _embeddings_model_endpoint_name,            
-        })
+        'body': json.dumps('Finished Writing to AOS!')
     }
-

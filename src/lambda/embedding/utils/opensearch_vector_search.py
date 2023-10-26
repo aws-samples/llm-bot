@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import uuid
 import warnings
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -90,7 +91,6 @@ def _is_aoss_enabled(http_auth: Any) -> bool:
         return True
     return False
 
-
 def _bulk_ingest_embeddings(
     client: Any,
     index_name: str,
@@ -123,12 +123,57 @@ def _bulk_ingest_embeddings(
         metadata = metadatas[i] if metadatas else {}
         _id = ids[i] if ids else str(uuid.uuid4())
         request = {
+            "_op_type": "update",
+            "_index": index_name,
+            "doc": {
+                vector_field: embeddings[i],
+                text_field: text,
+                "metadata": metadata,
+            },
+            "doc_as_upsert": True
+        }
+        if is_aoss:
+            request["id"] = _id
+        else:
+            request["_id"] = _id
+        requests.append(request)
+        return_ids.append(_id)
+    bulk(client, requests, max_chunk_bytes=max_chunk_bytes)
+    if not is_aoss:
+        client.indices.refresh(index=index_name)
+    return return_ids
+
+def _bulk_ingest_data(
+    client: Any,
+    index_name: str,
+    data_list: List,
+    ids: List,
+    mapping: Optional[Dict] = None,
+    max_chunk_bytes: Optional[int] = 1 * 1024 * 1024,
+    is_aoss: bool = False,
+) -> List[str]:
+    """Bulk Ingest Embeddings into given index."""
+    if not mapping:
+        mapping = dict()
+
+    bulk = _import_bulk()
+    not_found_error = _import_not_found_error()
+    requests = []
+    return_ids = []
+    mapping = mapping
+
+    try:
+        client.indices.get(index=index_name)
+    except not_found_error:
+        client.indices.create(index=index_name, body=mapping)
+
+    for i, data in enumerate(data_list):
+        _id = ids[i] if ids else str(uuid.uuid4())
+        request = {
             "_op_type": "index",
             "_index": index_name,
-            vector_field: embeddings[i],
-            text_field: text,
-            "metadata": metadata,
         }
+        request.update(data)
         if is_aoss:
             request["id"] = _id
         else:
@@ -169,7 +214,7 @@ def _default_text_mapping(
         "settings": {"index": {"knn": True, "knn.algo_param.ef_search": ef_search}},
         "mappings": {
             "properties": {
-                vector_field: {
+                "content_vector": {
                     "type": "knn_vector",
                     "dimension": dim,
                     "method": {
@@ -178,7 +223,37 @@ def _default_text_mapping(
                         "engine": engine,
                         "parameters": {"ef_construction": ef_construction, "m": m},
                     },
-                }
+                },
+                "text_vector": {
+                    "type": "knn_vector",
+                    "dimension": dim,
+                    "method": {
+                        "name": "hnsw",
+                        "space_type": space_type,
+                        "engine": engine,
+                        "parameters": {"ef_construction": ef_construction, "m": m},
+                    },
+                },
+                "answer_vector": {
+                    "type": "knn_vector",
+                    "dimension": dim,
+                    "method": {
+                        "name": "hnsw",
+                        "space_type": space_type,
+                        "engine": engine,
+                        "parameters": {"ef_construction": ef_construction, "m": m},
+                    },
+                },
+                "title_vector": {
+                    "type": "knn_vector",
+                    "dimension": dim,
+                    "method": {
+                        "name": "hnsw",
+                        "space_type": space_type,
+                        "engine": engine,
+                        "parameters": {"ef_construction": ef_construction, "m": m},
+                    },
+                },
             }
         },
     }
@@ -347,6 +422,38 @@ class OpenSearchVectorSearch(VectorStore):
     def embeddings(self) -> Embeddings:
         return self.embedding_function
 
+    def add_documents(self, documents: List[Dict], ids: List[int], **kwargs: Any) -> List[str]:
+        """Run more documents through the embeddings and add to the vectorstore.
+
+        Args:
+            documents (List[Dict]: Documents to add to the vectorstore.
+
+        Returns:
+            List[str]: List of IDs of the added texts.
+        """
+        # TODO: Handle the case where the user doesn't provide ids on the Collection
+        titles = []
+        contents = []
+        answers = []
+        texts = []
+        metadatas = []
+        for doc in documents:
+            raw_content = doc.page_content.replace("\n", " ")
+            field_match = re.match("Title\:(.*)Content\:(.*)Answer\:(.*)", raw_content)
+            if not field_match:
+                print(f"doc format no match {doc.metadata}")
+                continue
+            titles.append(field_match.group(1))
+            contents.append(field_match.group(2))
+            answers.append(field_match.group(3))
+            texts.append(doc.page_content)
+            metadatas.append(doc.metadata)
+        if len(texts) > 0:
+            self.add_texts(texts, metadatas, text_field="text", vector_field="text_vector", ids=ids, **kwargs)
+            self.add_texts(titles, text_field="title", vector_field="title_vector", ids=ids, **kwargs)
+            self.add_texts(contents, text_field="content", vector_field="content_vector", ids=ids, **kwargs)
+            self.add_texts(answers, text_field="answer", vector_field="answer_vector", ids=ids, **kwargs)
+
     def __add(
         self,
         texts: Iterable[str],
@@ -421,7 +528,7 @@ class OpenSearchVectorSearch(VectorStore):
             metadatas=metadatas,
             ids=ids,
             bulk_size=bulk_size,
-            kwargs=kwargs,
+            **kwargs,
         )
 
     def add_embeddings(

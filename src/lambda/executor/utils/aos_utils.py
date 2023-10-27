@@ -79,7 +79,7 @@ class LLMBotOpenSearchClient:
             "size": size,
             "query": {
                 "knn": {
-                    "vector_field": {
+                    field: {
                         "vector": query_term,
                         "k": size
                     }
@@ -154,5 +154,4 @@ class LLMBotOpenSearchClient:
             body=query,
             index=index_name
         )
-        result = self.organize_results(query_type, response, field)
-        return result
+        return response 

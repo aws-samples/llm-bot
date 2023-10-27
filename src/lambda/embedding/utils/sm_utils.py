@@ -33,7 +33,8 @@ class SagemakerEndpointEmbeddingsJumpStart(SagemakerEndpointEmbeddings):
         _chunk_size = len(texts) if chunk_size > len(texts) else chunk_size
         st = time.time()
         for i in range(0, len(texts), _chunk_size):
-            response = self._embedding_func(texts[i:i + _chunk_size])
+            embedding_texts = [text[:512] for text in texts[i:i + _chunk_size]]
+            response = self._embedding_func(embedding_texts)
             results.extend(response)
         time_taken = time.time() - st
         logger.info(f"got results for {len(texts)} in {time_taken}s, length of embeddings list is {len(results)}")
@@ -45,8 +46,10 @@ class ContentHandler(EmbeddingsContentHandler):
     content_type = "application/json"
     accepts = "application/json"
 
-    def transform_input(self, prompt: str, model_kwargs={}) -> bytes:
-        input_str = json.dumps({"inputs": prompt, **model_kwargs})
+    def transform_input(self, prompt, model_kwargs={}) -> bytes:
+        # add bge_prompt to each element in prompt
+        new_prompt = ["为这个句子生成表示以用于检索相关文章：" + p for p in prompt]
+        input_str = json.dumps({"inputs": new_prompt, **model_kwargs})
         return input_str.encode('utf-8') 
 
     def transform_output(self, output: bytes) -> str:

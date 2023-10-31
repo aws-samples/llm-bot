@@ -21,7 +21,7 @@ from aos_utils import OpenSearchClient
 from opensearchpy import OpenSearch, RequestsHttpConnection
 
 # global constants
-MAX_FILE_SIZE = 1024*1024*100 # 100MB
+MAX_FILE_SIZE = 1024*1024*1024 # 1GB
 MAX_OS_DOCS_PER_PUT = 2
 CHUNK_SIZE_FOR_DOC_SPLIT = 600
 CHUNK_OVERLAP_FOR_DOC_SPLIT = 20
@@ -88,10 +88,12 @@ def load_processed_documents(prefix=""):
                 s3.meta.client.download_file(_document_bucket, obj.key, file_path)
 
                 file_content = json.load(open(file_path, 'r'))
-                for raw_chunk in file_content:
-                    chunk_source = raw_chunk.get('source') if isinstance(raw_chunk.get('source'), str) else "CSDC & DGR Data 20230830"
-                    chunk = Document(page_content=raw_chunk['content'], metadata={"source": chunk_source})
-                    chunks.append(chunk)
+                return file_content
+                # for raw_chunk in file_content:
+                #     chunk_source = raw_chunk.get('source') if isinstance(raw_chunk.get('source'), str) else "CSDC & DGR Data 20230830"
+                #     chunk = Document(page_content=raw_chunk['content'], metadata={"source": chunk_source})
+                #     chunk = Document(page_content=raw_chunk['content'], metadata={"source": chunk_source})
+                #     chunks.append(chunk)
     
     for chunk in chunks:
         chunk.metadata['timestamp'] = time.time()
@@ -99,7 +101,7 @@ def load_processed_documents(prefix=""):
 
     return chunks
 
-def process_shard(shard, embeddings_model_endpoint_name, aws_region, os_index_name, os_domain_ep, os_http_auth, shard_id) -> int: 
+def process_shard(shard, embeddings_model_endpoint_name, aws_region, os_index_name, os_domain_ep, os_http_auth, shard_id, doc_type="repost") -> int: 
     # logger.info(f'Starting process_shard with content: {shard}')
     st = time.time()
     embeddings = create_sagemaker_embeddings_from_js_model(embeddings_model_endpoint_name, aws_region)
@@ -113,7 +115,10 @@ def process_shard(shard, embeddings_model_endpoint_name, aws_region, os_index_na
         connection_class = RequestsHttpConnection
     )
     # docsearch.add_documents(documents=shard)
-    docsearch.add_documents(documents=shard, ids=range(shard_id*len(shard), (shard_id+1)*len(shard)))
+    if doc_type == "repost":
+        docsearch.add_documents(documents=shard, ids=range(shard_id*len(shard), (shard_id+1)*len(shard)))
+    elif doc_type == "ug":
+        docsearch.add_ug_documents(documents=shard, ids=range(shard_id*len(shard), (shard_id+1)*len(shard)))
     et = time.time() - st
     logger.info(f'Shard completed in {et} seconds.')
     return 0
@@ -147,6 +152,7 @@ def lambda_handler(event, context):
 
     # parse arguments from event
     prefix = json.loads(event['body'])['document_prefix']
+    doc_type = json.loads(event['body'])['doc_type']
     file_processed = json.loads(event['body']).get('file_processed', False)
 
     # Set the NLTK data path to the /tmp directory (writable in AWS Lambda)
@@ -203,7 +209,7 @@ def lambda_handler(event, context):
 
     # shard_start_index = 1
     for shard_id, shard in enumerate(shards):
-        process_shard(shards[shard_id].tolist(), _embeddings_model_endpoint_name, aws_region, index_name, _opensearch_cluster_domain, awsauth, shard_id)
+        process_shard(shards[shard_id].tolist(), _embeddings_model_endpoint_name, aws_region, index_name, _opensearch_cluster_domain, awsauth, shard_id, doc_type)
 
     et = time.time() - st
     logger.info(f'Time taken: {et} seconds. all shards processed')

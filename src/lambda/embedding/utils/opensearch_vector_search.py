@@ -258,6 +258,120 @@ def _default_text_mapping(
         },
     }
 
+def _faq_text_mapping(
+    dim: int,
+    engine: str = "nmslib",
+    space_type: str = "l2",
+    ef_search: int = 512,
+    ef_construction: int = 512,
+    m: int = 16,
+) -> Dict:
+    """For Approximate k-NN Search, this is the default mapping to create index."""
+    return {
+        "settings": {"index": {"knn": True, "knn.algo_param.ef_search": ef_search}},
+        "mappings": {
+            "properties": {
+                "content_vector": {
+                    "type": "knn_vector",
+                    "dimension": dim,
+                    "method": {
+                        "name": "hnsw",
+                        "space_type": space_type,
+                        "engine": engine,
+                        "parameters": {"ef_construction": ef_construction, "m": m},
+                    },
+                },
+                "text_vector": {
+                    "type": "knn_vector",
+                    "dimension": dim,
+                    "method": {
+                        "name": "hnsw",
+                        "space_type": space_type,
+                        "engine": engine,
+                        "parameters": {"ef_construction": ef_construction, "m": m},
+                    },
+                },
+                "answer_vector": {
+                    "type": "knn_vector",
+                    "dimension": dim,
+                    "method": {
+                        "name": "hnsw",
+                        "space_type": space_type,
+                        "engine": engine,
+                        "parameters": {"ef_construction": ef_construction, "m": m},
+                    },
+                },
+                "title_vector": {
+                    "type": "knn_vector",
+                    "dimension": dim,
+                    "method": {
+                        "name": "hnsw",
+                        "space_type": space_type,
+                        "engine": engine,
+                        "parameters": {"ef_construction": ef_construction, "m": m},
+                    },
+                },
+            }
+        },
+    }
+
+def _ug_text_mapping(
+    dim: int,
+    engine: str = "nmslib",
+    space_type: str = "l2",
+    ef_search: int = 512,
+    ef_construction: int = 512,
+    m: int = 16,
+) -> Dict:
+    """For Approximate k-NN Search, this is the default mapping to create index."""
+    return {
+        "settings": {"index": {"knn": True, "knn.algo_param.ef_search": ef_search}},
+        "mappings": {
+            "properties": {
+                "content_vector": {
+                    "type": "knn_vector",
+                    "dimension": dim,
+                    "method": {
+                        "name": "hnsw",
+                        "space_type": space_type,
+                        "engine": engine,
+                        "parameters": {"ef_construction": ef_construction, "m": m},
+                    },
+                },
+                "topic_vector": {
+                    "type": "knn_vector",
+                    "dimension": dim,
+                    "method": {
+                        "name": "hnsw",
+                        "space_type": space_type,
+                        "engine": engine,
+                        "parameters": {"ef_construction": ef_construction, "m": m},
+                    },
+                },
+                "service_vector": {
+                    "type": "knn_vector",
+                    "dimension": dim,
+                    "method": {
+                        "name": "hnsw",
+                        "space_type": space_type,
+                        "engine": engine,
+                        "parameters": {"ef_construction": ef_construction, "m": m},
+                    },
+                },
+                "abstract_vector": {
+                    "type": "knn_vector",
+                    "dimension": dim,
+                    "method": {
+                        "name": "hnsw",
+                        "space_type": space_type,
+                        "engine": engine,
+                        "parameters": {"ef_construction": ef_construction, "m": m},
+                    },
+                },
+            }
+        },
+    }
+
 
 def _default_approximate_search_query(
     query_vector: List[float],
@@ -438,21 +552,58 @@ class OpenSearchVectorSearch(VectorStore):
         texts = []
         metadatas = []
         for doc in documents:
-            raw_content = doc.page_content.replace("\n", " ")
+            raw_content = doc["page_content"].replace("\n", " ")
             field_match = re.match("Title\:(.*)Content\:(.*)Answer\:(.*)", raw_content)
             if not field_match:
-                print(f"doc format no match {doc.metadata}")
+                print(f"doc format no match {doc['metadata']}")
                 continue
             titles.append(field_match.group(1))
             contents.append(field_match.group(2))
             answers.append(field_match.group(3))
-            texts.append(doc.page_content)
-            metadatas.append(doc.metadata)
+            texts.append(doc["page_content"])
+            metadatas.append(doc["metadata"])
         if len(texts) > 0:
             self.add_texts(texts, metadatas, text_field="text", vector_field="text_vector", ids=ids, **kwargs)
             self.add_texts(titles, text_field="title", vector_field="title_vector", ids=ids, **kwargs)
             self.add_texts(contents, text_field="content", vector_field="content_vector", ids=ids, **kwargs)
             self.add_texts(answers, text_field="answer", vector_field="answer_vector", ids=ids, **kwargs)
+
+    def add_ug_documents(self, documents: List[Dict], ids: List[int], **kwargs: Any) -> List[str]:
+        """Run more documents through the embeddings and add to the vectorstore.
+
+        Args:
+            documents (List[Dict]: Documents to add to the vectorstore.
+
+        Returns:
+            List[str]: List of IDs of the added texts.
+        """
+        # TODO: Handle the case where the user doesn't provide ids on the Collection
+        services = []
+        abstracts = []
+        topics = []
+        contents = []
+        metadatas = []
+        dim = 1024
+        space_type = _get_kwargs_value(kwargs, "space_type", "l2")
+        ef_search = _get_kwargs_value(kwargs, "ef_search", 512)
+        ef_construction = _get_kwargs_value(kwargs, "ef_construction", 512)
+        m = _get_kwargs_value(kwargs, "m", 16)
+        engine = _get_kwargs_value(kwargs, "engine", "nmslib")
+        _validate_aoss_with_engines(self.is_aoss, engine)
+        mapping = _ug_text_mapping(
+            dim, engine, space_type, ef_search, ef_construction, m
+        )
+        for doc in documents:
+            services.append(doc["service"])
+            abstracts.append(doc["abstract"])
+            topics.append(doc["topic"])
+            contents.append(doc["content"])
+            metadatas.append({"url": doc["url"], "lang": doc["url"], "type": doc["type"]})
+        if len(topics) > 0:
+            self.add_texts(topics, metadatas, text_field="topic", vector_field="topic_vector", ids=ids, mapping=mapping, **kwargs)
+            self.add_texts(contents, text_field="content", vector_field="content_vector", ids=ids, mapping=mapping, **kwargs)
+            self.add_texts(abstracts, text_field="abstract", vector_field="abstract_vector", ids=ids, mapping=mapping, **kwargs)
+            self.add_texts(services, text_field="service", vector_field="service_vector", ids=ids, mapping=mapping, **kwargs)
 
     def __add(
         self,
@@ -466,20 +617,9 @@ class OpenSearchVectorSearch(VectorStore):
         _validate_embeddings_and_bulk_size(len(embeddings), bulk_size)
         index_name = _get_kwargs_value(kwargs, "index_name", self.index_name)
         text_field = _get_kwargs_value(kwargs, "text_field", "text")
-        dim = len(embeddings[0])
-        engine = _get_kwargs_value(kwargs, "engine", "nmslib")
-        space_type = _get_kwargs_value(kwargs, "space_type", "l2")
-        ef_search = _get_kwargs_value(kwargs, "ef_search", 512)
-        ef_construction = _get_kwargs_value(kwargs, "ef_construction", 512)
-        m = _get_kwargs_value(kwargs, "m", 16)
         vector_field = _get_kwargs_value(kwargs, "vector_field", "vector_field")
         max_chunk_bytes = _get_kwargs_value(kwargs, "max_chunk_bytes", 1 * 1024 * 1024)
-
-        _validate_aoss_with_engines(self.is_aoss, engine)
-
-        mapping = _default_text_mapping(
-            dim, engine, space_type, ef_search, ef_construction, m, vector_field
-        )
+        mapping = _get_kwargs_value(kwargs, "mapping", None)
 
         return _bulk_ingest_embeddings(
             self.client,

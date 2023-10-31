@@ -115,7 +115,7 @@ def process_shard(shard, embeddings_model_endpoint_name, aws_region, os_index_na
         connection_class = RequestsHttpConnection
     )
     # docsearch.add_documents(documents=shard)
-    if doc_type == "repost":
+    if doc_type == "faq":
         docsearch.add_documents(documents=shard, ids=range(shard_id*len(shard), (shard_id+1)*len(shard)))
     elif doc_type == "ug":
         docsearch.add_ug_documents(documents=shard, ids=range(shard_id*len(shard), (shard_id+1)*len(shard)))

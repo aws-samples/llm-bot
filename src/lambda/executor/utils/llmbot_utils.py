@@ -22,8 +22,8 @@ def combine_recalls(opensearch_knn_respose, opensearch_query_response):
 
     combine_result = []
     for doc, doc_info in filter_knn_result.items():
-        if doc in filter_inverted_result.keys():
-            combine_result.append({ "doc" : doc, "score" : doc_info[1], "source" : doc_info[0] })
+        # if doc in filter_inverted_result.keys():
+        combine_result.append({ "doc" : doc, "score" : doc_info[1], "source" : doc_info[0] })
 
     return combine_result
 

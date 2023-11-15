@@ -7,6 +7,9 @@
 !/package.json
 !/LICENSE
 !/.npmignore
+script/sagemaker/*/
+script/sagemaker/.env
+script/sagemaker/*.tar.gz
 logs
 *.log
 npm-debug.log*

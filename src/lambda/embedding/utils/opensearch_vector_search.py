@@ -692,7 +692,8 @@ class OpenSearchVectorSearch(VectorStore):
                 "embedding_lang": embedding_lang,
                 "embedding_type": embedding_type,
                 "content_lang": doc["lang"],
-                "content_type": doc["type"] 
+                "content_type": doc["type"],
+                "is_api": doc["is_api"] 
                 }
             # service 
             texts.append(doc["service"])

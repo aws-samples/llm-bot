@@ -106,9 +106,10 @@ if __name__ == '__main__':
     # s3_prefix_list is docs0.json, docs1.json, docs2.json, docs3.json, docs4.json, docs5.json, docs6.json, docs7.json, docs8.json, docs9.json
     import json
     docs_s3_bucket = "llm-bot-glue-docs-atl-3163279526-us-west-2"
-    docs = json.load(open("/home/ubuntu/Project/llm-bot/src/lambda/test/ug.json"))
+    # docs = json.load(open("/home/ubuntu/Project/llm-bot/src/lambda/test/ug.json"))
     # docs = json.load(open("/home/ubuntu/Project/llm-bot/src/lambda/test/dgr_csdc_0830_1013_doc.json"))
-    index_name = "ug-index-2"
+    docs = json.load(open("/home/ubuntu/Project/llm-bot/src/lambda/test/ug_add_api_tag.json"))
+    index_name = "ug-index-3"
     content_type = "ug"
     shard_num = 32
     import numpy as np

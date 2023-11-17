@@ -1,24 +1,19 @@
-import os
 import time
+import os
 import json
-import logging
 import numpy as np
-import boto3, json
-import tempfile
+import json
 import nltk
 
-from langchain.document_loaders import S3DirectoryLoader
-# from langchain.vectorstores import OpenSearchVectorSearch
-from langchain.document_loaders.unstructured import UnstructuredFileLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.schema.document import Document
-
-from opensearch_vector_search import OpenSearchVectorSearch
-from sm_utils import create_sagemaker_embeddings_from_js_model
-from requests_aws4auth import AWS4Auth
-from aos_utils import OpenSearchClient
+import logging
+import boto3, json
 
 from opensearchpy import OpenSearch, RequestsHttpConnection
+from aos_utils import OpenSearchClient
+from build_index import load_processed_documents, process_shard
+
+from requests_aws4auth import AWS4Auth
+
 
 # global constants
 MAX_FILE_SIZE = 1024*1024*1024 # 1GB
@@ -32,7 +27,16 @@ logger.setLevel(logging.INFO)
 
 # fetch all the environment variables
 _document_bucket = os.environ.get('document_bucket')
-_embeddings_model_endpoint_name = os.environ.get('embedding_endpoint')
+_embedding_endpoint_name_list = os.environ.get('embedding_endpoint').split(',')
+_embedding_lang_list = os.environ.get('embedding_lang').split(',')
+_embedding_type_list = os.environ.get('embedding_type').split(',')
+
+_embeddings_model_info_list = []
+for endpoint_name, lang, type in zip(_embedding_endpoint_name_list, _embedding_lang_list, _embedding_type_list):
+    _embeddings_model_info_list.append({
+        "endpoint_name": endpoint_name,
+        "lang": lang,
+        "type": type})
 _opensearch_cluster_domain = os.environ.get('opensearch_cluster_domain')
 
 s3 = boto3.resource('s3')
@@ -40,88 +44,6 @@ aws_region = boto3.Session().region_name
 document_bucket = s3.Bucket(_document_bucket)
 credentials = boto3.Session().get_credentials()
 awsauth = AWS4Auth(credentials.access_key, credentials.secret_key, aws_region, 'es', session_token=credentials.token)
-
-def load_documents(prefix=""):
-    docs = []
-    for obj in document_bucket.objects.filter(Prefix=prefix):
-        if obj.key.endswith("/"):   # bypass the prefix directory
-            continue
-        else:
-            # loader = S3FileLoader(bucket, obj.key)
-            with tempfile.TemporaryDirectory(dir='/tmp') as temp_dir:
-                file_path = f"{temp_dir}/{obj.key}"
-                logging.info(f"_document_bucket={_document_bucket}, obj.key={obj.key}, file_path={file_path}")
-                os.makedirs(os.path.dirname(file_path), exist_ok=True)
-                s3.meta.client.download_file(_document_bucket, obj.key, file_path)
-
-                loader = UnstructuredFileLoader(file_path)
-                # return loader.load()
-                docs.extend(loader.load())
-    return docs
-
-def split_documents(docs):
-    text_splitter = RecursiveCharacterTextSplitter(
-        # Set a really small chunk size, just to show.
-        chunk_size = CHUNK_SIZE_FOR_DOC_SPLIT,
-        chunk_overlap = CHUNK_OVERLAP_FOR_DOC_SPLIT,
-        length_function = len,
-    )
-
-    # add a custom metadata field, timestamp and embeddings_model
-    for doc in docs:
-        doc.metadata['timestamp'] = time.time()
-        doc.metadata['embeddings_model'] = _embeddings_model_endpoint_name
-    chunks = text_splitter.create_documents([doc.page_content for doc in docs], metadatas=[doc.metadata for doc in docs])
-    return chunks
-
-def load_processed_documents(prefix=""):
-    chunks = []
-    for obj in document_bucket.objects.filter(Prefix=prefix):
-        if obj.key.endswith("/"):   # bypass the prefix directory
-            continue
-        else:
-            # loader = S3FileLoader(bucket, obj.key)
-            with tempfile.TemporaryDirectory(dir='/tmp') as temp_dir:
-                file_path = f"{temp_dir}/{obj.key}"
-                logging.info(f"_document_bucket={_document_bucket}, obj.key={obj.key}, file_path={file_path}")
-                os.makedirs(os.path.dirname(file_path), exist_ok=True)
-                s3.meta.client.download_file(_document_bucket, obj.key, file_path)
-
-                file_content = json.load(open(file_path, 'r'))
-                return file_content
-                # for raw_chunk in file_content:
-                #     chunk_source = raw_chunk.get('source') if isinstance(raw_chunk.get('source'), str) else "CSDC & DGR Data 20230830"
-                #     chunk = Document(page_content=raw_chunk['content'], metadata={"source": chunk_source})
-                #     chunk = Document(page_content=raw_chunk['content'], metadata={"source": chunk_source})
-                #     chunks.append(chunk)
-    
-    for chunk in chunks:
-        chunk.metadata['timestamp'] = time.time()
-        chunk.metadata['embeddings_model'] = _embeddings_model_endpoint_name
-
-    return chunks
-
-def process_shard(shard, embeddings_model_endpoint_name, aws_region, os_index_name, os_domain_ep, os_http_auth, shard_id, doc_type="repost") -> int: 
-    # logger.info(f'Starting process_shard with content: {shard}')
-    st = time.time()
-    embeddings = create_sagemaker_embeddings_from_js_model(embeddings_model_endpoint_name, aws_region)
-    docsearch = OpenSearchVectorSearch(
-        index_name=os_index_name,
-        embedding_function=embeddings,
-        opensearch_url="https://{}".format(os_domain_ep),
-        http_auth = os_http_auth,
-        use_ssl = True,
-        verify_certs = True,
-        connection_class = RequestsHttpConnection
-    )
-    # docsearch.add_documents(documents=shard)
-    if doc_type == "faq":
-        docsearch.add_documents(documents=shard, ids=range(shard_id*len(shard), (shard_id+1)*len(shard)))
-    elif doc_type == "ug":
-        docsearch.add_ug_documents(documents=shard, ids=range(shard_id*len(shard), (shard_id+1)*len(shard)))
-    et = time.time() - st
-    logger.info(f'Shard completed in {et} seconds.')
-    return 0
 
 def lambda_handler(event, context):
     request_timestamp = time.time()
@@ -186,11 +108,7 @@ def lambda_handler(event, context):
     # split all docs into chunks
     st = time.time()
     logger.info('Loading documents ...')
-    if file_processed:
-        chunks = load_processed_documents(prefix=prefix)
-    else:
-        docs = load_documents(prefix=prefix)
-        chunks = split_documents(docs)
+    chunks = load_processed_documents(_document_bucket, prefix=prefix)
 
     et = time.time() - st
     # [Document(page_content = 'xx', metadata = { 'source': '/tmp/xx/xx.pdf', 'timestamp': 123.456, 'embeddings_model': 'embedding-endpoint'})],
@@ -209,7 +127,7 @@ def lambda_handler(event, context):
 
     # shard_start_index = 1
     for shard_id, shard in enumerate(shards):
-        process_shard(shards[shard_id].tolist(), _embeddings_model_endpoint_name, aws_region, index_name, _opensearch_cluster_domain, awsauth, shard_id, doc_type)
+        process_shard(shards[shard_id].tolist(), _embeddings_model_info_list, aws_region, index_name, _opensearch_cluster_domain, awsauth, shard_id, doc_type, MAX_OS_DOCS_PER_PUT)
 
     et = time.time() - st
     logger.info(f'Time taken: {et} seconds. all shards processed')
@@ -219,6 +137,6 @@ def lambda_handler(event, context):
         'headers': {'Content-Type': 'application/json'},
         'body': json.dumps({
             "created": request_timestamp,
-            "model": _embeddings_model_endpoint_name,            
+            # "model": _embeddings_model_endpoint_name,            
         })
     }

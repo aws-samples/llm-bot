@@ -5,6 +5,7 @@ import uuid
 import warnings
 import traceback
 import math
+import copy
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
@@ -210,7 +211,6 @@ def _default_scripting_text_mapping(
         }
     }
 
-
 def _default_text_mapping(
     dim: int,
     engine: str = "nmslib",
@@ -218,44 +218,14 @@ def _default_text_mapping(
     ef_search: int = 512,
     ef_construction: int = 512,
     m: int = 16,
-    vector_field: str = "vector_field",
+    vector_field: str = "embedding",
 ) -> Dict:
     """For Approximate k-NN Search, this is the default mapping to create index."""
     return {
         "settings": {"index": {"knn": True, "knn.algo_param.ef_search": ef_search}},
         "mappings": {
             "properties": {
-                "content_vector": {
-                    "type": "knn_vector",
-                    "dimension": dim,
-                    "method": {
-                        "name": "hnsw",
-                        "space_type": space_type,
-                        "engine": engine,
-                        "parameters": {"ef_construction": ef_construction, "m": m},
-                    },
-                },
-                "text_vector": {
-                    "type": "knn_vector",
-                    "dimension": dim,
-                    "method": {
-                        "name": "hnsw",
-                        "space_type": space_type,
-                        "engine": engine,
-                        "parameters": {"ef_construction": ef_construction, "m": m},
-                    },
-                },
-                "answer_vector": {
-                    "type": "knn_vector",
-                    "dimension": dim,
-                    "method": {
-                        "name": "hnsw",
-                        "space_type": space_type,
-                        "engine": engine,
-                        "parameters": {"ef_construction": ef_construction, "m": m},
-                    },
-                },
-                "title_vector": {
+                vector_field: {
                     "type": "knn_vector",
                     "dimension": dim,
                     "method": {
@@ -266,7 +236,7 @@ def _default_text_mapping(
                     },
                 },
             }
-        },
+        }
     }
 
 def _faq_text_mapping(
@@ -278,53 +248,30 @@ def _faq_text_mapping(
     m: int = 16,
 ) -> Dict:
     """For Approximate k-NN Search, this is the default mapping to create index."""
-    return {
+    text_field_list = ["content", "text", "answer", "title"]
+    lang_list = ["zh", "en"]
+    type_list = ["similarity", "relevance"]
+    vector_field_mapping = {
         "settings": {"index": {"knn": True, "knn.algo_param.ef_search": ef_search}},
         "mappings": {
             "properties": {
-                "content_vector": {
-                    "type": "knn_vector",
-                    "dimension": dim,
-                    "method": {
-                        "name": "hnsw",
-                        "space_type": space_type,
-                        "engine": engine,
-                        "parameters": {"ef_construction": ef_construction, "m": m},
-                    },
-                },
-                "text_vector": {
-                    "type": "knn_vector",
-                    "dimension": dim,
-                    "method": {
-                        "name": "hnsw",
-                        "space_type": space_type,
-                        "engine": engine,
-                        "parameters": {"ef_construction": ef_construction, "m": m},
-                    },
-                },
-                "answer_vector": {
-                    "type": "knn_vector",
-                    "dimension": dim,
-                    "method": {
-                        "name": "hnsw",
-                        "space_type": space_type,
-                        "engine": engine,
-                        "parameters": {"ef_construction": ef_construction, "m": m},
-                    },
-                },
-                "title_vector": {
-                    "type": "knn_vector",
-                    "dimension": dim,
-                    "method": {
-                        "name": "hnsw",
-                        "space_type": space_type,
-                        "engine": engine,
-                        "parameters": {"ef_construction": ef_construction, "m": m},
-                    },
-                },
             }
-        },
+        }
     }
+    for text_field in text_field_list:
+        for lang in lang_list:
+            for type in type_list:
+                vector_field_mapping["mappings"]["properties"][f"{text_field}_{lang}_{type}_vector"] = {
+                    "type": "knn_vector",
+                    "dimension": dim,
+                    "method": {
+                        "name": "hnsw",
+                        "space_type": space_type,
+                        "engine": engine,
+                        "parameters": {"ef_construction": ef_construction, "m": m},
+                    },
+                }
+    return vector_field_mapping
 
 def _ug_text_mapping(
     dim: int,
@@ -402,7 +349,6 @@ def _ug_text_mapping(
             }
         },
     }
-
 
 def _default_approximate_search_query(
     query_vector: List[float],
@@ -588,6 +534,8 @@ class OpenSearchVectorSearch(VectorStore):
         ef_construction = _get_kwargs_value(kwargs, "ef_construction", 512)
         m = _get_kwargs_value(kwargs, "m", 16)
         engine = _get_kwargs_value(kwargs, "engine", "nmslib")
+        lang = _get_kwargs_value(kwargs, "lang", "zh")
+        type = _get_kwargs_value(kwargs, "type", "similarity")
         _validate_aoss_with_engines(self.is_aoss, engine)
         mapping = _faq_text_mapping(
             dim, engine, space_type, ef_search, ef_construction, m
@@ -606,10 +554,70 @@ class OpenSearchVectorSearch(VectorStore):
                 doc["source"] = ""
             metadatas.append({"source": doc["source"]})
         if len(texts) > 0:
-            self.add_texts(texts, metadatas, text_field="text", vector_field="text_vector", ids=ids, mapping=mapping, **kwargs)
-            self.add_texts(titles, text_field="title", vector_field="title_vector", ids=ids, mapping=mapping, **kwargs)
-            self.add_texts(contents, text_field="content", vector_field="content_vector", ids=ids, mapping=mapping, **kwargs)
-            self.add_texts(answers, text_field="answer", vector_field="answer_vector", ids=ids, mapping=mapping, **kwargs)
+            self.add_texts(texts, metadatas, text_field="text", vector_field=f"text_{lang}_{type}_vector", ids=ids, mapping=mapping, **kwargs)
+            self.add_texts(titles, text_field="title", vector_field=f"title_{lang}_{type}_vector", ids=ids, mapping=mapping, **kwargs)
+            self.add_texts(contents, text_field="content", vector_field=f"content_{lang}_{type}_vector", ids=ids, mapping=mapping, **kwargs)
+            self.add_texts(answers, text_field="answer", vector_field=f"answer_{lang}_{type}_vector", ids=ids, mapping=mapping, **kwargs)
+
+    def add_faq_documents_v2(self, documents: List[Dict], ids: List[int], **kwargs: Any) -> List[str]:
+        """Run more documents through the embeddings and add to the vectorstore.
+
+        Args:
+            documents (List[Dict]: Documents to add to the vectorstore.
+
+        Returns:
+            List[str]: List of IDs of the added texts.
+        """
+        # TODO: Handle the case where the user doesn't provide ids on the Collection
+        texts = []
+        metadatas = []
+        dim = 1024
+        space_type = _get_kwargs_value(kwargs, "space_type", "l2")
+        ef_search = _get_kwargs_value(kwargs, "ef_search", 512)
+        ef_construction = _get_kwargs_value(kwargs, "ef_construction", 512)
+        m = _get_kwargs_value(kwargs, "m", 16)
+        engine = _get_kwargs_value(kwargs, "engine", "nmslib")
+        embedding_lang = _get_kwargs_value(kwargs, "embedding_lang", "zh")
+        embedding_type = _get_kwargs_value(kwargs, "embedding_type", "similarity")
+        _validate_aoss_with_engines(self.is_aoss, engine)
+        mapping = _default_text_mapping(
+            dim, engine, space_type, ef_search, ef_construction, m, "embedding"
+        )
+        for doc in documents:
+            if type(doc["source"]) is float and math.isnan(doc["source"]):
+                doc["source"] = "dgr-oncall"
+            base_metadata = {
+                "source": doc["source"],
+                "embedding_lang": embedding_lang,
+                "embedding_type": embedding_type 
+                }
+            raw_content = doc["content"].replace("\n", " ")
+            field_match = re.match("Title\:(.*)Content\:(.*)Answer\:(.*)", raw_content)
+            if not field_match:
+                print(f"doc format no match {doc['source']}")
+                continue
+            # question 
+            texts.append(field_match.group(1))
+            metadata = copy.deepcopy(base_metadata)
+            metadata["field"] = "question"
+            metadatas.append(metadata)
+            # question detail 
+            texts.append(field_match.group(2))
+            metadata = copy.deepcopy(base_metadata)
+            metadata["field"] = "question_detail"
+            metadatas.append(metadata)
+            # answer
+            texts.append(field_match.group(3))
+            metadata = copy.deepcopy(base_metadata)
+            metadata["field"] = "answer"
+            metadatas.append(metadata)
+            # all_text
+            texts.append(doc["content"])
+            metadata = copy.deepcopy(base_metadata)
+            metadata["field"] = "all_text"
+            metadatas.append(metadata)
+        if len(texts) > 0:
+            self.add_texts(texts, metadatas, text_field="content", vector_field=f"embedding", mapping=mapping, **kwargs)
 
     def add_ug_documents(self, documents: List[Dict], ids: List[int], **kwargs: Any) -> List[str]:
         """Run more documents through the embeddings and add to the vectorstore.
@@ -647,12 +655,72 @@ class OpenSearchVectorSearch(VectorStore):
             sources.append(doc["url"])
             metadatas.append({"source": doc["url"], "lang": doc["lang"], "type": doc["type"]})
         if len(topics) > 0:
-            self.add_texts(topics, metadatas, text_field="topic", vector_field="topic_vector", ids=ids, mapping=mapping, **kwargs)
-            self.add_texts(contents, text_field="content", vector_field="content_vector", ids=ids, mapping=mapping, **kwargs)
-            self.add_texts(abstracts, text_field="abstract", vector_field="abstract_vector", ids=ids, mapping=mapping, **kwargs)
-            self.add_texts(services, text_field="service", vector_field="service_vector", ids=ids, mapping=mapping, **kwargs)
-            self.add_texts(titles, text_field="title", vector_field="title_vector", ids=ids, mapping=mapping, **kwargs)
-            self.add_texts(sources, text_field="source", vector_field="source_vector", ids=ids, mapping=mapping, **kwargs)
+            self.add_texts(topics, metadatas, text_field="topic", vector_field="topic_{lang}_{type}_vector", ids=ids, mapping=mapping, **kwargs)
+            self.add_texts(contents, text_field="content", vector_field="content_{lang}_{type}_vector", ids=ids, mapping=mapping, **kwargs)
+            self.add_texts(abstracts, text_field="abstract", vector_field="abstract_{lang}_{type}_vector", ids=ids, mapping=mapping, **kwargs)
+            self.add_texts(services, text_field="service", vector_field="service_{lang}_{type}_vector", ids=ids, mapping=mapping, **kwargs)
+            self.add_texts(titles, text_field="title", vector_field="title_{lang}_{type}_vector", ids=ids, mapping=mapping, **kwargs)
+            self.add_texts(sources, text_field="source", vector_field="source_{lang}_{type}_vector", ids=ids, mapping=mapping, **kwargs)
+
+    def add_ug_documents_v2(self, documents: List[Dict], ids: List[int], **kwargs: Any) -> List[str]:
+        """Run more documents through the embeddings and add to the vectorstore.
+
+        Args:
+            documents (List[Dict]: Documents to add to the vectorstore.
+
+        Returns:
+            List[str]: List of IDs of the added texts.
+        """
+        # TODO: Handle the case where the user doesn't provide ids on the Collection
+        texts = []
+        metadatas = []
+        dim = 1024
+        space_type = _get_kwargs_value(kwargs, "space_type", "l2")
+        ef_search = _get_kwargs_value(kwargs, "ef_search", 512)
+        ef_construction = _get_kwargs_value(kwargs, "ef_construction", 512)
+        m = _get_kwargs_value(kwargs, "m", 16)
+        engine = _get_kwargs_value(kwargs, "engine", "nmslib")
+        embedding_lang = _get_kwargs_value(kwargs, "embedding_lang", "zh")
+        embedding_type = _get_kwargs_value(kwargs, "embedding_type", "similarity")
+        _validate_aoss_with_engines(self.is_aoss, engine)
+        mapping = _default_text_mapping(
+            dim, engine, space_type, ef_search, ef_construction, m, "embedding"
+        )
+        for doc in documents:
+            base_metadata = {
+                "source": doc["url"],
+                "embedding_lang": embedding_lang,
+                "embedding_type": embedding_type,
+                "content_lang": doc["lang"],
+                "content_type": doc["type"] 
+                }
+            # service 
+            texts.append(doc["service"])
+            metadata = copy.deepcopy(base_metadata)
+            metadata["field"] = "service"
+            metadatas.append(metadata)
+            # abstract 
+            texts.append(doc["abstract"])
+            metadata = copy.deepcopy(base_metadata)
+            metadata["field"] = "abstract"
+            metadatas.append(metadata)
+            # topic 
+            texts.append(doc["topic"])
+            metadata = copy.deepcopy(base_metadata)
+            metadata["field"] = "topic"
+            metadatas.append(metadata)
+            # content 
+            texts.append(doc["content"])
+            metadata = copy.deepcopy(base_metadata)
+            metadata["field"] = "content"
+            metadatas.append(metadata)
+            # title 
+            texts.append(f"{doc['service']} {doc['topic']}")
+            metadata = copy.deepcopy(base_metadata)
+            metadata["field"] = "title"
+            metadatas.append(metadata)
+        if len(texts) > 0:
+            self.add_texts(texts, metadatas, text_field="content", vector_field=f"embedding", mapping=mapping, **kwargs)
 
     def __add(
         self,
@@ -712,14 +780,17 @@ class OpenSearchVectorSearch(VectorStore):
         """
         max_retry_time = 3
         retry_time = 0
+        embeddings = None
         while retry_time < max_retry_time:
             try:
                 embeddings = self.embedding_function.embed_documents(list(texts))
                 break
-            except:
+            except Exception as error:
+                traceback.print_exc()
+                print(f"retry embedding {retry_time} {texts}", error)
                 retry_time += 1
-                print(f"retry embedding f{retry_time}")
-                embeddings = self.embedding_function.embed_documents(list(texts))
+        if embeddings is None:
+            return
         return self.__add(
             texts,
             embeddings,

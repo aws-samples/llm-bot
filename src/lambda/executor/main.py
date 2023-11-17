@@ -66,11 +66,16 @@ def organize_faq_results(response):
     aos_hits = response["hits"]["hits"]
     for aos_hit in aos_hits:
         result = {}
-        result["doc"] = aos_hit['_source']['text']
-        result["source"] = aos_hit['_source']['metadata']['source']
-        result["score"] = aos_hit["_score"]
-        result["detail"] = aos_hit['_source']
-        result["answer"] = aos_hit['_source']['answer']
+        try:
+            result["doc"] = aos_hit['_source']['text']
+            result["source"] = aos_hit['_source']['metadata']['source']
+            result["score"] = aos_hit["_score"]
+            result["detail"] = aos_hit['_source']
+            result["answer"] = aos_hit['_source']['answer']
+        except:
+            print("index_error")
+            print(aos_hit['_source'])
+            continue
         # result.update(aos_hit["_source"])
         results.append(result)
     return results
@@ -107,6 +112,7 @@ def get_answer(query_input:str, history:list, embedding_model_endpoint:str, cros
     # 1. concatenate query_input and history to unified prompt
     query_knowledge = ''.join([query_input] + [row[0] for row in history][::-1])
     debug_info = {
+        "query": query_input,
         "q_q_match_info": {},
         "knowledge_qa_knn_recall": {},
         "knowledge_qa_boolean_recall": {},
@@ -117,7 +123,8 @@ def get_answer(query_input:str, history:list, embedding_model_endpoint:str, cros
 
     # 2. get AOS q-q-knn recall 
     start = time.time()
-    query_embedding = SagemakerEndpointVectorOrCross(prompt="为这个句子生成表示以用于检索相关文章：" + query_knowledge, endpoint_name=embedding_model_endpoint, region_name=region, model_type="vector", stop=None)
+    # query_embedding = SagemakerEndpointVectorOrCross(prompt="为这个句子生成表示以用于检索相关文章：" + query_knowledge, endpoint_name=embedding_model_endpoint, region_name=region, model_type="vector", stop=None)
+    query_embedding = SagemakerEndpointVectorOrCross(query_knowledge, endpoint_name=embedding_model_endpoint, region_name=region, model_type="vector", stop=None)
     if enable_q_q_match:
         opensearch_knn_response = aos_client.search(index_name=aos_faq_index, query_type="knn", query_term=query_embedding, field="title_vector")
         opensearch_knn_results = organize_faq_results(opensearch_knn_response)
@@ -125,7 +132,7 @@ def get_answer(query_input:str, history:list, embedding_model_endpoint:str, cros
         elpase_time = time.time() - start
         logger.info(f'runing time of opensearch_knn : {elpase_time}s seconds')
         if len(opensearch_knn_results) > 0:
-            debug_info["q_q_match_info"] = remove_redundancy_debug_info(opensearch_knn_results[:10])
+            debug_info["q_q_match_info"] = remove_redundancy_debug_info(opensearch_knn_results[:3])
             if opensearch_knn_results[0]["score"] >= 0.9:
                 answer = opensearch_knn_results[0]["answer"]
                 sources = [opensearch_knn_results[0]["source"]]
@@ -134,14 +141,16 @@ def get_answer(query_input:str, history:list, embedding_model_endpoint:str, cros
                 return answer, query_type, sources, recall_knowledge_str, debug_info
     if enable_knowledge_qa:
         # 2. get AOS knn recall 
+        faq_result_num = 3
+        ug_result_num = 3
         start = time.time()
         opensearch_knn_results = []
         opensearch_knn_response = aos_client.search(index_name=aos_faq_index, query_type="knn", query_term=query_embedding, field="text_vector")
-        opensearch_knn_results.extend(organize_faq_results(opensearch_knn_response))
+        opensearch_knn_results.extend(organize_faq_results(opensearch_knn_response)[:faq_result_num])
         # logger.info(json.dumps(opensearch_knn_response, ensure_ascii=False))
         opensearch_knn_response = aos_client.search(index_name=aos_ug_index, query_type="knn", query_term=query_embedding, field="title_vector")
-        opensearch_knn_results.extend(organize_ug_results(opensearch_knn_response))
-        debug_info["knowledge_qa_knn_recall"] = remove_redundancy_debug_info(opensearch_knn_results[:20])
+        opensearch_knn_results.extend(organize_ug_results(opensearch_knn_response)[:ug_result_num])
+        debug_info["knowledge_qa_knn_recall"] = remove_redundancy_debug_info(opensearch_knn_results)
         elpase_time = time.time() - start
         logger.info(f'runing time of opensearch_knn : {elpase_time}s seconds')
         
@@ -189,7 +198,14 @@ def get_answer(query_input:str, history:list, embedding_model_endpoint:str, cros
     parameters = {'temperature': temperature}
     try:
         # generate_answer
-        answer = SagemakerEndpointVectorOrCross(prompt=query_input, endpoint_name=llm_model_endpoint, region_name=region, model_type="answer", stop=None, history=history, parameters=parameters, context=recall_knowledge_str)
+        answer = SagemakerEndpointVectorOrCross(prompt=query_input,
+                                                endpoint_name=llm_model_endpoint,
+                                                region_name=region,
+                                                model_type="answer",
+                                                stop=None,
+                                                history=history,
+                                                parameters=parameters,
+                                                context=recall_knowledge_str[:2560])
         debug_info["knowledge_qa_llm"] = {"prompt": query_input, "context": recall_knowledge_str, "answer": answer}
     except Exception as e:
         logger.info(f'Exceptions: str({e})')
@@ -303,6 +319,8 @@ def lambda_handler(event, context):
     return {
         'statusCode': 200,
         'headers': {'Content-Type': 'application/json'},
-        'body': llmbot_response,
-        'debug_info': debug_info
+        'body': json.dumps(llmbot_response),
+        # 'body': llmbot_response,
+        'debug_info': json.dumps(debug_info)
+        # 'debug_info': debug_info
     }

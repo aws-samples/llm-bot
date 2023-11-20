@@ -340,6 +340,10 @@ def lambda_handler(event, context):
         enable_q_q_match = event_body['enable_q_q_match']
     else:
         enable_q_q_match = False
+    if "enable_debug" in event_body:
+        enable_debug = event_body['enable_debug']
+    else:
+        enable_debug = False
 
     history, question = process_input_messages(messages)
     role = "user"
@@ -377,11 +381,16 @@ def lambda_handler(event, context):
     }
 
     # 2. return rusult
-    return {
-        'statusCode': 200,
-        'headers': {'Content-Type': 'application/json'},
-        'body': json.dumps(llmbot_response),
-        # 'body': llmbot_response,
-        # 'debug_info': json.dumps(debug_info)
-        # 'debug_info': debug_info
-    }
+    if enable_debug:
+        return {
+            'statusCode': 200,
+            'headers': {'Content-Type': 'application/json'},
+            'body': json.dumps(llmbot_response),
+            'debug_info': json.dumps(debug_info)
+        }
+    else:
+        return {
+            'statusCode': 200,
+            'headers': {'Content-Type': 'application/json'},
+            'body': json.dumps(llmbot_response),
+        }

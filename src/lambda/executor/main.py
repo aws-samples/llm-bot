@@ -142,38 +142,54 @@ def get_answer(query_input:str, history:list, zh_embedding_model_endpoint:str, e
     query_knowledge = ''.join([query_input] + [row[0] for row in history][::-1])
     debug_info = {
         "query": query_input,
+        "query_parser_info": {},
         "q_q_match_info": {},
         "knowledge_qa_knn_recall": {},
         "knowledge_qa_boolean_recall": {},
         "knowledge_qa_combined_recall": {},
         "knowledge_qa_cross_model_sort": {},
         "knowledge_qa_llm": {},
+        "knowledge_qa_rerank": {},
     }
 
     # 2. get AOS q-q-knn recall 
     start = time.time()
     parsed_query = run_preprocess(query_knowledge) 
+    debug_info["query_parser_info"] = parsed_query
     if parsed_query["query_lang"] == "zh":
-        query_similarity_embedding = SagemakerEndpointVectorOrCross(prompt=query_knowledge,
+        zh_query_similarity_embedding = SagemakerEndpointVectorOrCross(prompt=query_knowledge,
                                                                     endpoint_name=zh_embedding_model_endpoint, region_name=region,
                                                                     model_type="vector", stop=None)
-        query_relevance_embedding = SagemakerEndpointVectorOrCross(prompt="为这个句子生成表示以用于检索相关文章：" + query_knowledge,
+        zh_query_relevance_embedding = SagemakerEndpointVectorOrCross(prompt="为这个句子生成表示以用于检索相关文章：" + query_knowledge,
                                                                     endpoint_name=zh_embedding_model_endpoint, region_name=region,
+                                                                    model_type="vector", stop=None)
+        en_query_similarity_embedding = SagemakerEndpointVectorOrCross(prompt=parsed_query["translated_text"],
+                                                                    endpoint_name=en_embedding_model_endpoint, region_name=region,
                                                                     model_type="vector", stop=None)
         en_query_relevance_embedding = SagemakerEndpointVectorOrCross(prompt="Represent this sentence for searching relevant passages: " + parsed_query["translated_text"],
                                                                     endpoint_name=en_embedding_model_endpoint, region_name=region,
                                                                     model_type="vector", stop=None)
     elif parsed_query["query_lang"] == "en":
-        query_similarity_embedding = SagemakerEndpointVectorOrCross(prompt=query_knowledge,
+        en_query_similarity_embedding = SagemakerEndpointVectorOrCross(prompt=query_knowledge,
                                                                     endpoint_name=en_embedding_model_endpoint, region_name=region,
                                                                     model_type="vector", stop=None)
-        query_relevance_embedding = SagemakerEndpointVectorOrCross(prompt="Represent this sentence for searching relevant passages: " + query_knowledge,
+        en_query_relevance_embedding = SagemakerEndpointVectorOrCross(prompt="Represent this sentence for searching relevant passages: " + query_knowledge,
+                                                                    endpoint_name=en_embedding_model_endpoint, region_name=region,
+                                                                    model_type="vector", stop=None)
+        zh_query_similarity_embedding = SagemakerEndpointVectorOrCross(prompt=parsed_query["translated_text"],
+                                                                    endpoint_name=en_embedding_model_endpoint, region_name=region,
+                                                                    model_type="vector", stop=None)
+        zh_query_relevance_embedding = SagemakerEndpointVectorOrCross(prompt="为这个句子生成表示以用于检索相关文章：" + parsed_query["translated_text"],
                                                                     endpoint_name=en_embedding_model_endpoint, region_name=region,
                                                                     model_type="vector", stop=None)
     if enable_q_q_match:
+        opensearch_knn_results = []
         opensearch_knn_response = aos_client.search(index_name=aos_faq_index, query_type="knn",
-                                                    query_term=query_similarity_embedding, field="embedding", size=2)
-        opensearch_knn_results = organize_faq_results(opensearch_knn_response, aos_faq_index)
+                                                    query_term=zh_query_similarity_embedding, field="embedding", size=2)
+        opensearch_knn_results.extend(organize_faq_results(opensearch_knn_response, aos_faq_index))
+        opensearch_knn_response = aos_client.search(index_name=aos_faq_index, query_type="knn",
+                                                    query_term=en_query_similarity_embedding, field="embedding", size=2)
+        opensearch_knn_results.extend(organize_faq_results(opensearch_knn_response, aos_faq_index))
         # logger.info(json.dumps(opensearch_knn_response, ensure_ascii=False))
         elpase_time = time.time() - start
         logger.info(f'runing time of opensearch_knn : {elpase_time}s seconds')
@@ -188,23 +204,33 @@ def get_answer(query_input:str, history:list, zh_embedding_model_endpoint:str, e
                 return answer, query_type, sources, recall_knowledge_str, debug_info
     if enable_knowledge_qa:
         # 2. get AOS knn recall 
-        faq_result_num = 3
-        ug_result_num = 3
+        faq_result_num = 2
+        ug_result_num = 10
         start = time.time()
         opensearch_knn_results = []
         opensearch_knn_response = aos_client.search(index_name=aos_faq_index, query_type="knn",
-                                                    query_term=query_relevance_embedding, field="embedding", size=2)
+                                                    query_term=zh_query_relevance_embedding, field="embedding", size=faq_result_num)
+        opensearch_knn_results.extend(organize_faq_results(opensearch_knn_response, aos_faq_index)[:faq_result_num])
+        opensearch_knn_response = aos_client.search(index_name=aos_faq_index, query_type="knn",
+                                                    query_term=en_query_relevance_embedding, field="embedding", size=faq_result_num)
         opensearch_knn_results.extend(organize_faq_results(opensearch_knn_response, aos_faq_index)[:faq_result_num])
         # logger.info(json.dumps(opensearch_knn_response, ensure_ascii=False))
         filter = None
         if parsed_query["is_api_query"]:
             filter = [{"term": {"metadata.is_api": True}}]
             opensearch_knn_response = aos_client.search(index_name=aos_ug_index, query_type="knn",
-                                                        query_term=en_query_relevance_embedding, field="embedding", filter=filter, size=2)
+                                                        query_term=zh_query_relevance_embedding, field="embedding", filter=filter, size=ug_result_num)
+            opensearch_knn_results.extend(organize_ug_results(opensearch_knn_response, aos_ug_index)[:ug_result_num])
+            opensearch_knn_response = aos_client.search(index_name=aos_ug_index, query_type="knn",
+                                                        query_term=en_query_relevance_embedding, field="embedding", filter=filter, size=ug_result_num)
+            opensearch_knn_results.extend(organize_ug_results(opensearch_knn_response, aos_ug_index)[:ug_result_num])
         else:
             opensearch_knn_response = aos_client.search(index_name=aos_ug_index, query_type="knn",
-                                                        query_term=query_relevance_embedding, field="embedding", filter=filter, size=2)
-        opensearch_knn_results.extend(organize_ug_results(opensearch_knn_response, aos_ug_index)[:ug_result_num])
+                                                        query_term=zh_query_relevance_embedding, field="embedding", filter=filter, size=ug_result_num)
+            opensearch_knn_results.extend(organize_ug_results(opensearch_knn_response, aos_ug_index)[:ug_result_num])
+            opensearch_knn_response = aos_client.search(index_name=aos_ug_index, query_type="knn",
+                                                        query_term=en_query_relevance_embedding, field="embedding", filter=filter, size=ug_result_num)
+            opensearch_knn_results.extend(organize_ug_results(opensearch_knn_response, aos_ug_index)[:ug_result_num])
         debug_info["knowledge_qa_knn_recall"] = remove_redundancy_debug_info(opensearch_knn_results)
         elpase_time = time.time() - start
         logger.info(f'runing time of opensearch_knn : {elpase_time}s seconds')
@@ -223,8 +249,8 @@ def get_answer(query_input:str, history:list, zh_embedding_model_endpoint:str, e
 
         # 4. combine these two opensearch_knn_response and opensearch_query_response
         recall_knowledge = combine_recalls(opensearch_knn_results, opensearch_query_results)
-        recall_knowledge.sort(key=lambda x: x["score"], reverse=True)
-        debug_info["knowledge_qa_combined_recall"] = recall_knowledge[:40]
+        # recall_knowledge.sort(key=lambda x: x["score"], reverse=True)
+        # debug_info["knowledge_qa_combined_recall"] = recall_knowledge
         
         # 5. Predict correlation score using cross model
         # recall_knowledge_cross = []
@@ -234,14 +260,25 @@ def get_answer(query_input:str, history:list, zh_embedding_model_endpoint:str, e
         #     # logger.info(json.dumps({'doc': knowledge['doc'], 'score': score, 'source': knowledge['source']}, ensure_ascii=False))
         #     if score > 0.8:
         #         recall_knowledge_cross.append({'doc': knowledge['doc'], 'score': score, 'source': knowledge['source']})
+        rerank_pair = []
+        for knowledge in recall_knowledge:
+            rerank_pair.append([query_knowledge, knowledge["doc"]])
+        score_list = reranker.compute_score(rerank_pair)
+        rerank_knowledge = []
+        for knowledge, score in zip(recall_knowledge, score_list):
+            if score > 0:
+                knowledge["rerank_score"] = score
+                rerank_knowledge.append(knowledge)
+        rerank_knowledge.sort(key=lambda x:x["rerank_score"], reverse=True)
+        debug_info["knowledge_qa_rerank"] = rerank_knowledge
 
         # recall_knowledge_cross.sort(key=lambda x: x["score"], reverse=True)
         # debug_info["knowledge_qa_cross_model_sort"] = recall_knowledge_cross[:10]
 
         # recall_knowledge_str = concat_recall_knowledge(recall_knowledge_cross[:2])
-        recall_knowledge_str = concat_recall_knowledge(recall_knowledge[:2])
+        recall_knowledge_str = concat_recall_knowledge(rerank_knowledge[:2])
         # sources = list(set([item["source"] for item in recall_knowledge_cross[:2]]))
-        sources = list(set([item["source"] for item in recall_knowledge[:2]]))
+        sources = list(set([item["source"] for item in rerank_knowledge[:2]]))
         query_type = QueryType.KnowledgeQuery
         elpase_time = time.time() - start
         logger.info(f'runing time of recall knowledge : {elpase_time}s seconds')
@@ -321,6 +358,10 @@ def main_entry(session_id:str, query_input:str, history:list, zh_embedding_model
     # logger.info(json_obj_str)
 
     return answer, sources, debug_info 
+
+
+from FlagEmbedding import FlagReranker
+reranker = FlagReranker('BAAI/bge-reranker-large', use_fp16=True) # Setting use_fp16 to True speeds up computation with a slight performance degradation
 
 @handle_error
 def lambda_handler(event, context):

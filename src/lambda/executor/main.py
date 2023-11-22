@@ -12,7 +12,7 @@ from sm_utils import SagemakerEndpointVectorOrCross
 
 logger = logging.getLogger()
 handler = logging.StreamHandler()
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 logger.addHandler(handler)
 
 
@@ -20,6 +20,7 @@ region = os.environ['AWS_REGION']
 zh_embedding_endpoint = os.environ.get("zh_embedding_endpoint", "")
 en_embedding_endpoint = os.environ.get("en_embedding_endpoint", "")
 cross_endpoint = os.environ.get("cross_endpoint", "")
+rerank_endpoint = os.environ.get("rerank_endpoint", "")
 aos_endpoint = os.environ.get("aos_endpoint", "")
 # aos_index = os.environ.get("aos_index", "")
 aos_faq_index = os.environ.get("aos_faq_index", "")
@@ -136,8 +137,9 @@ def remove_redundancy_debug_info(results):
                 del result["detail"][field]
     return filtered_results
 
-def get_answer(query_input:str, history:list, zh_embedding_model_endpoint:str, en_embedding_model_endpoint:str, cross_model_endpoint:str, 
-               llm_model_endpoint:str, aos_faq_index:str, aos_ug_index:str, enable_knowledge_qa:bool, temperature: float, enable_q_q_match:bool):
+def get_answer(query_input:str, history:list, zh_embedding_model_endpoint:str, en_embedding_model_endpoint:str,
+               cross_model_endpoint:str, rerank_model_endpoint:str, llm_model_endpoint:str,
+               aos_faq_index:str, aos_ug_index:str, enable_knowledge_qa:bool, temperature: float, enable_q_q_match:bool):
     # 1. concatenate query_input and history to unified prompt
     query_knowledge = ''.join([query_input] + [row[0] for row in history][::-1])
     debug_info = {
@@ -263,7 +265,8 @@ def get_answer(query_input:str, history:list, zh_embedding_model_endpoint:str, e
         rerank_pair = []
         for knowledge in recall_knowledge:
             rerank_pair.append([query_knowledge, knowledge["doc"]])
-        score_list = reranker.compute_score(rerank_pair)
+        score_list = json.loads(SagemakerEndpointVectorOrCross(prompt=json.dumps(rerank_pair), endpoint_name=rerank_model_endpoint,
+                                                          region_name=region, model_type="rerank", stop=None))
         rerank_knowledge = []
         for knowledge, score in zip(recall_knowledge, score_list):
             if score > 0:
@@ -304,8 +307,9 @@ def get_answer(query_input:str, history:list, zh_embedding_model_endpoint:str, e
         answer = ""
     return answer, query_type, sources, recall_knowledge_str, debug_info
 
-def main_entry(session_id:str, query_input:str, history:list, zh_embedding_model_endpoint:str, en_embedding_model_endpoint:str, cross_model_endpoint:str, 
-               llm_model_endpoint:str, aos_faq_index:str, aos_ug_index:str, enable_knowledge_qa:bool, temperature: float, enable_q_q_match:bool):
+def main_entry(session_id:str, query_input:str, history:list, zh_embedding_model_endpoint:str, en_embedding_model_endpoint:str,
+               cross_model_endpoint:str, rerank_model_endpoint:str, llm_model_endpoint:str,
+               aos_faq_index:str, aos_ug_index:str, enable_knowledge_qa:bool, temperature: float, enable_q_q_match:bool):
     """
     Entry point for the Lambda function.
 
@@ -328,6 +332,7 @@ def main_entry(session_id:str, query_input:str, history:list, zh_embedding_model
                zh_embedding_model_endpoint,
                en_embedding_model_endpoint,
                cross_model_endpoint,
+               rerank_model_endpoint,
                llm_model_endpoint,
                aos_faq_index,
                aos_ug_index,
@@ -359,10 +364,6 @@ def main_entry(session_id:str, query_input:str, history:list, zh_embedding_model
 
     return answer, sources, debug_info 
 
-
-from FlagEmbedding import FlagReranker
-reranker = FlagReranker('BAAI/bge-reranker-large', use_fp16=True) # Setting use_fp16 to True speeds up computation with a slight performance degradation
-
 @handle_error
 def lambda_handler(event, context):
     request_timestamp = time.time()
@@ -393,7 +394,8 @@ def lambda_handler(event, context):
     
     main_entry_start = time.time() 
     answer, sources, debug_info = main_entry(session_id, question, history, zh_embedding_endpoint, en_embedding_endpoint,
-                                             cross_endpoint, llm_endpoint, aos_faq_index, aos_ug_index, knowledge_qa_flag,
+                                             cross_endpoint, rerank_endpoint, llm_endpoint,
+                                             aos_faq_index, aos_ug_index, knowledge_qa_flag,
                                              temperature, enable_q_q_match)
     main_entry_elpase = time.time() - main_entry_start  
     logger.info(f'runing time of main_entry : {main_entry_elpase}s seconds')

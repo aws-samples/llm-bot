@@ -36,6 +36,18 @@ class crossContentHandler(LLMContentHandler):
         response_json = json.loads(output.read().decode("utf-8"))
         return response_json['scores'][0][1]
 
+class rerankContentHandler(LLMContentHandler):
+    content_type = "application/json"
+    accepts = "application/json"
+
+    def transform_input(self, rerank_pairs: str, model_kwargs: Dict) -> bytes:
+        input_str = json.dumps({"inputs": json.loads(rerank_pairs)})
+        return input_str.encode('utf-8')
+
+    def transform_output(self, output: bytes) -> str:
+        response_json = json.loads(output.read().decode("utf-8"))
+        return json.dumps(response_json['rerank_scores'])
+
 class answerContentHandler(LLMContentHandler):
     content_type = "application/json"
     accepts = "application/json"
@@ -193,6 +205,8 @@ def SagemakerEndpointVectorOrCross(prompt: str, endpoint_name: str, region_name:
         content_handler = crossContentHandler()
     elif model_type == "answer":
         content_handler = answerContentHandler()
+    elif model_type == "rerank":
+        content_handler = rerankContentHandler()
     # TODO: replace with SagemakerEndpointStreaming
     genericModel = SagemakerEndpoint(
         endpoint_name = endpoint_name,

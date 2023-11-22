@@ -16,6 +16,8 @@ from langchain.schema.vectorstore import VectorStore
 from langchain.utils import get_from_dict_or_env
 from langchain.vectorstores.utils import maximal_marginal_relevance
 
+from preprocess import run_preprocess  
+
 IMPORT_OPENSEARCH_PY_ERROR = (
     "Could not import OpenSearch. Please install it with `pip install opensearch-py`."
 )

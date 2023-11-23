@@ -306,16 +306,19 @@ def get_llm_processed_prompts(initial_prompt):
     logger.info("the first invoke: {}".format(response))
     # logger.info("the second invoke: {}".format(conversation.predict(input="change to realist style")))
 
-    # TODO, below parase is not stable and can be changed accord to PE, will update later
+    # TODO, below paras is not stable and can be changed accord to PE, will update later
     # Define regular expressions
     positive_pattern = r"Positive Prompt: (.*?),\s+Negative Prompt:"
-    negative_pattern = r"Negative Prompt: (.*?),\s+Recommended Model Index List:"
-    model_pattern = r"Recommended Model Index List: (\[[^\]]*\])"
+    negative_pattern = r"Negative Prompt: (.*?),\s+]"
+
 
     # Extract data using regex
     positive_prompt = re.search(positive_pattern, response, re.DOTALL).group(1).strip()
     negative_prompt = re.search(negative_pattern, response, re.DOTALL).group(1).strip()
-    model_index_list = re.search(model_pattern, response, re.DOTALL).group(1).strip()
+    # model_index_list = re.search(model_pattern, response, re.DOTALL).group(1).strip()
+    model_index_list = []
+    logger.info("positive_pattern: {}".format(positive_prompt))
+    logger.info("negative_pattern: {}".format(negative_prompt))
 
     logger.info("positive_prompt: {}\n negative_prompt: {}\n model_index_list: {}".format(positive_prompt, negative_prompt, model_index_list))
     return positive_prompt, negative_prompt, model_index_list
@@ -663,10 +666,10 @@ def generate_llm_image(initial_prompt: str, col, order: int):
         raise e
 
 
-@retry(stop=stop_after_attempt(5))
+@retry(stop=stop_after_attempt(1))
 def generate_llm_image_col(initial_prompt: str, col, order: int, progress_bar):
     global support_model_list
-    models = default_models
+    # models = default_models
 
     positive_prompt, negative_prompt, model_index_list = get_llm_processed_prompts(initial_prompt)
     st.session_state.progress += 15
@@ -676,15 +679,15 @@ def generate_llm_image_col(initial_prompt: str, col, order: int, progress_bar):
     if positive_prompt == "" or negative_prompt == "":
         positive_prompt = initial_prompt
 
-    if len(model_index_list) > 0:
-        # TODO, support model list should align with prompt template, we assume the model list is fixed at 2
-        models = [support_model_list[int(index)] for index in model_index_list.strip("[]").split(",")]
+    # if len(model_index_list) > 0:
+    #     # TODO, support model list should align with prompt template, we assume the model list is fixed at 2
+    #     models = [support_model_list[int(index)] for index in model_index_list.strip("[]").split(",")]
 
     # select the model in model list according to the order while keep the List type to compatible with genegrate_image, e.g. models: ['LahCuteCartoonSDXL_alpha.safetensors', 'majicmixRealistic_v7.safetensors']
-    models = [models[order]]
+    # models = [models[order]]
 
     # This is a synchronous call, will block the UI
-    generate_image(positive_prompt, negative_prompt, models, col, progress_bar)
+    generate_image(positive_prompt, negative_prompt, default_models, col, progress_bar)
 
 def select_checkpoint(user_list: List[str]):
     global support_model_list

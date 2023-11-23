@@ -86,41 +86,139 @@ def get_bedrock_llm():
     return cl_llm
 
 # todo template use dynamic checkpoints
+# sd_prompt = PromptTemplate.from_template(
+#     """
+#     Human:
+#     - Transform the input prompt {input} into a detailed prompt for an image generation model, describing the scene with vivid and specific attributes that enhance the original concept, only adjective and noun are allowed, verb and adverb are not allowed, each words speperated by comma.
+#     - Generate a negative prompt that specifies what should be avoided in the image, including any elements that contradict the desired style or tone.
+#     - Recommend a list of suitable models from the fix model list that best match the style and content described in the detailed prompt.
+#     - Other notes please refer to the following example:
+
+#     The output should be a plain text in Python List format shown follows, no extra content added beside Positive Prompt, Negative Prompt and Recommended Model Index List.
+#     [Positive Prompt: <detailed_prompt>,
+#     Negative Prompt: <negative_prompt>,
+#     Recommended Model Index List: [model index list]]
+
+#     The model can only be chosen from following list of dict with table name and style name described, we can only and must choose 2 models based on style described and output the model index list:
+#     [
+#         {{"sd_xl_base_1.0.safetensors", "default"}},
+#         {{"majicmixRealistic_v7.safetensors", "realistic"}},
+#         {{"x2AnimeFinal_gzku.safetensors", "anime"}}
+#         {{"LahCuteCartoonSDXL_alpha.safetensors", "cartoon"}}
+#     ]
+
+#     For example:
+#     If the input prompt is: "a cute dog in cartoon style", the output should be as follows:
+#     [
+#         Positive Prompt: "visually appealing, high-quality image of a cute dog in a vibrant, cartoon style, adorable appearance, expressive eyes, friendly demeanor, colorful and lively, reminiscent of popular animation studios, artwork.",
+#         Negative Prompt: "realism, dark or dull colors, scary or aggressive dog depictions, overly simplistic, stick figure drawings, blurry or distorted images, inappropriate or NSFW content.",
+#         Recommended Model Index List: [0, 3]
+#     ]
+
+#     If the input prompt is: "a girl in photo-realistic style", the output should be as follows:
+#     [
+#         Positive Prompt: "detailed, photo-realistic, life-like, high-definition, sharp, accurate color tones, realistic textures, natural lighting, subtle expressions, vivid, true-to-life, authentic appearance, nuanced, real photograph.",
+#         Negative Prompt: "cartoonish, abstract, stylized, overly simplistic, exaggerated, distorted features, bright unrealistic colors, artificial elements, fantasy elements, non-photo-realistic.",
+#         Recommended Model Index List: [0, 2]
+#     ]
+
+#     Current conversation:
+#     <conversation_history>
+#     {history}
+#     </conversation_history>
+
+#     Here is the human's next reply:
+#     <human_reply>
+#     {input}
+#     </human_reply>
+
+#     Assistant:
+#     """)
+
 sd_prompt = PromptTemplate.from_template(
     """
     Human:
     - Transform the input prompt {input} into a detailed prompt for an image generation model, describing the scene with vivid and specific attributes that enhance the original concept, only adjective and noun are allowed, verb and adverb are not allowed, each words speperated by comma.
     - Generate a negative prompt that specifies what should be avoided in the image, including any elements that contradict the desired style or tone.
-    - Recommend a list of suitable models from the fix model list that best match the style and content described in the detailed prompt.
     - Other notes please refer to the following example:
 
-    The output should be a plain text in Python List format shown follows, no extra content added beside Positive Prompt, Negative Prompt and Recommended Model Index List.
+    The output should be a plain text in Python List format shown follows, no extra content added beside Positive Prompt, Negative Prompt.
     [Positive Prompt: <detailed_prompt>,
-    Negative Prompt: <negative_prompt>,
-    Recommended Model Index List: [model index list]]
-
-    The model can only be chosen from following list of dict with table name and style name described, we can only and must choose 2 models based on style described and output the model index list:
-    [
-        {{"sd_xl_base_1.0.safetensors", "default"}},
-        {{"majicmixRealistic_v7.safetensors", "realistic"}},
-        {{"x2AnimeFinal_gzku.safetensors", "anime"}}
-        {{"LahCuteCartoonSDXL_alpha.safetensors", "cartoon"}}
-    ]
+    Negative Prompt: <negative_prompt>]
 
     For example:
     If the input prompt is: "a cute dog in cartoon style", the output should be as follows:
     [
         Positive Prompt: "visually appealing, high-quality image of a cute dog in a vibrant, cartoon style, adorable appearance, expressive eyes, friendly demeanor, colorful and lively, reminiscent of popular animation studios, artwork.",
         Negative Prompt: "realism, dark or dull colors, scary or aggressive dog depictions, overly simplistic, stick figure drawings, blurry or distorted images, inappropriate or NSFW content.",
-        Recommended Model Index List: [0, 3]
     ]
 
     If the input prompt is: "a girl in photo-realistic style", the output should be as follows:
     [
         Positive Prompt: "detailed, photo-realistic, life-like, high-definition, sharp, accurate color tones, realistic textures, natural lighting, subtle expressions, vivid, true-to-life, authentic appearance, nuanced, real photograph.",
         Negative Prompt: "cartoonish, abstract, stylized, overly simplistic, exaggerated, distorted features, bright unrealistic colors, artificial elements, fantasy elements, non-photo-realistic.",
-        Recommended Model Index List: [0, 2]
     ]
+
+    If the input prompt is: "Can you draw a photograph of astronaut floating in space", the output should be as follows:
+    [
+        Positive Prompt: "breathtaking selfie photograph of astronaut floating in space, earth in the background. masterpiece, best quality, highly detailed",
+        Negative Prompt: "lowres, anime, cartoon, graphic, text, painting, crayon, graphite, abstract glitch, blurry, cropped, worst quality, low quality, watermark",
+    ]
+
+    If the input prompt is: "帮我画一个飞行的宇航员", the output should be as follows:
+    [
+        Positive Prompt: "breathtaking selfie photograph of astronaut floating in space, earth in the background. masterpiece, best quality, highly detailed",
+        Negative Prompt: "lowres, anime, cartoon, graphic, text, painting, crayon, graphite, abstract glitch, blurry",
+    ]
+
+    If the input prompt is: "Please generate a night street of Tokyo", the output should be as follows:
+    [
+        Positive Prompt: "breathtaking night street of Tokyo, neon lights. masterpiece, best quality, highly detailed",
+        Negative Prompt: "lowres, anime, cartoon, graphic, text, painting, crayon, graphite, abstract glitch, blurry",
+    ]
+
+    If the input prompt is: "你可以画一个东京的夜景图吗？", the output should be as follows:
+    [
+        Positive Prompt: "breathtaking night street of Tokyo, neon lights. masterpiece, best quality, highly detailed",
+        Negative Prompt: "lowres, anime, cartoon, graphic, text, painting, crayon, graphite, abstract glitch, blurry",
+    ]
+
+    If the input prompt is: "Generate an empty classroom in anime style", the output should be as follows:
+    [
+        Positive Prompt: "anime artwork an empty classroom. anime style, key visual, vibrant, studio anime, highly detailed",
+        Negative Prompt: "photo, deformed, black and white, realism, disfigured, low contrast",
+    ]
+
+    If the input prompt is: "i want a photo of 1 realistic girl", the output should be as follows:
+    [
+        Positive Prompt: "masterpiece, best quality,realistic,1girl",
+        Negative Prompt: "nsfw,(worst quality:2), (low quality:2), (normal quality:2), lowres, ((monochrome)), ((grayscale)), watermark, (bad-hands-5:1.5)",
+    ]
+
+    If the input prompt is: "我想要一张女生的写实照片", the output should be as follows:
+    [
+        Positive Prompt: "best quality,highly detailed, masterpiece, 8k wallpaper, realistic,1girl",
+        Negative Prompt: "nsfw,(worst quality:2), (low quality:2), (normal quality:2), lowres, ((monochrome)), ((grayscale)), watermark, (bad-hands-5:1.5)",
+    ]
+
+    If the input prompt is: "我想要一张漫画风格的小狗", the output should be as follows:
+    [
+        Positive Prompt: "masterpiece, best quality, cartoon style, dog",
+        Negative Prompt: "realistic, dark or dull colors, (worst quality:2), (low quality:2), (normal quality:2), lowres, ((monochrome)), ((grayscale)), watermark",
+    ]
+
+    If the input prompt is: "请帮忙画一张朋克风格的猫", the output should be as follows:
+    [
+        Positive Prompt: "masterpiece, best quality, cybernetic cat wears futuristic armor",
+        Negative Prompt: "dark environment, (worst quality:2), (low quality:2), (normal quality:2), lowres, ((monochrome)), ((grayscale)), watermark",
+    ]
+    
+    If the input prompt is: "please draw a Steampunk cat", the output should be as follows:
+    [
+        Positive Prompt: "masterpiece, best quality, cybernetic cat wears futuristic armor",
+        Negative Prompt: "dark environment, (worst quality:2), (low quality:2), (normal quality:2), lowres, ((monochrome)), ((grayscale)), watermark",
+    ]
+
 
     Current conversation:
     <conversation_history>

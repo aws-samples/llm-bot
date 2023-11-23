@@ -218,7 +218,8 @@ sd_prompt = PromptTemplate.from_template(
         Positive Prompt: "masterpiece, best quality, cybernetic cat wears futuristic armor",
         Negative Prompt: "dark environment, (worst quality:2), (low quality:2), (normal quality:2), lowres, ((monochrome)), ((grayscale)), watermark",
     ]
-
+ 
+    "Do not include style modifiers that do not appear in the question in positive prompt, such as cute, cartoon \n"   
 
     Current conversation:
     <conversation_history>

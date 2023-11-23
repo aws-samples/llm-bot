@@ -128,6 +128,7 @@ export class LLMApiStack extends NestedStack {
             architecture: Architecture.X86_64,
             environment: {
                 opensearch_cluster_domain: _domainEndpoint,
+                embedding_endpoint: props._embeddingEndPoint,
             },
         });
 

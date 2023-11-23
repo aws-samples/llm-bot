@@ -55,7 +55,7 @@ class OpenSearchClient:
         Args:
             index (str): The name of the index to create.
             body (dict): A dictionary containing the settings and mappings for the index.
-        
+
         Sample body:
         {
             "aos_index": "chatbot-index",
@@ -272,7 +272,7 @@ class OpenSearchClient:
         }
         response = self.client.search(index=index, body=body)
         return response
-    
+
     def query_knn(self, index: str, body: str, _kwargs: dict):
         """
         Execute a search query using knn.
@@ -311,7 +311,7 @@ class OpenSearchClient:
         }
         response = self.client.search(index=index, body=body)
         return response
-    
+
     def query_exact(self, index: str, body: str, _kwargs: dict):
         """
         Execute a search query using exact match.
@@ -361,7 +361,7 @@ class OpenSearchClient:
                 "documents": {
                     "page_content": "This is a test",
                     "metadata": {
-                        "heading_hierarchy": ...
+                        "heading_hierarchy": "Title 1"
                         ...
                     }
                 }
@@ -369,7 +369,12 @@ class OpenSearchClient:
         }
         """
         body_dict = json.loads(body)
-        document = body_dict.get('body', {}).get('documents', {})
+        # assemble the document according to the Document class below:      
+        document = Document(
+            page_content=body_dict['documents']['page_content'],
+            metadata=body_dict['documents']['metadata']
+        )
+        logger.info("embeddingModelEndpoint: {}, region: {}, aosEndpoint: {}".format(embeddingModelEndpoint, region, aosEndpoint))
         embeddings = create_sagemaker_embeddings_from_js_model(embeddingModelEndpoint, region)
         docsearch = OpenSearchVectorSearch(
             index_name=index,

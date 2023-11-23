@@ -1,23 +1,38 @@
+import os
 import json
 import logging
 import time
+import boto3
 
+from tenacity import retry, stop_after_attempt
 from itertools import product
 from typing import Any, Dict, Generator, Iterable, List, Optional, Tuple
+from requests_aws4auth import AWS4Auth
+from opensearchpy import RequestsHttpConnection
+
 from langchain.docstore.document import Document
 from langchain.embeddings import OpenAIEmbeddings
 from langchain.vectorstores import FAISS
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.document_loaders import UnstructuredFileLoader
+from langchain.vectorstores import OpenSearchVectorSearch
 
 from llm_bot_dep.loaders.nougat_pdf import NougatPDFLoader
 from llm_bot_dep.splitter_utils import MarkdownHeaderTextSplitter
+from llm_bot_dep.sm_utils import create_sagemaker_embeddings_from_js_model
 
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv(dotenv_path='.env')
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+embeddingModelEndpoint = os.getenv("EMBEDDING_MODEL_ENDPOINT")
+aosEndpoint = os.getenv("AOS_ENDPOINT")
+region = os.getenv("REGION")
+
+credentials = boto3.Session().get_credentials()
+awsauth = AWS4Auth(credentials.access_key, credentials.secret_key, region, 'es', session_token=credentials.token)
 
 metadata_template = {
     "content_type": "paragraph",
@@ -29,51 +44,6 @@ metadata_template = {
     "keywords": [],
     "summary": "",
 }
-
-sample_sample_markdown_document = """
-# Learning to Retrieve In-Context Examples for Large Language Models
-###### Abstract
-aaaa
-## 1 Introduction
-1111
-## 2 Related Work
-2222
-## 3 Preliminaries
-3333
-## 4 Methodology
-4444
-### Training Data Generation
-5555
-### Reward Modeling
-6666
-### Training LLM Retrievers with Knowledge Distillation
-7777
-### Evaluation of LLM Retrievers
-8888
-|-|-|
-|:--:|:--:|
-## 5 Experiments
-### Evaluation Setup
-9999
-### Main Results
-0000
-### Training Pipeline of LLM-R
-1010
-### Generalization Ability of LLM-R
-1212
-### When does LLM-R Work and When Does it Not?
-1313
-### Using Different LLMs for Data Generation and Task Evaluation
-1414
-### Scaling the Number of In-Context Examples and Retriever Size
-1515
-## 7 Conclusion
-1616
-## Limitations
-1717
-## References
-1818
-"""
 
 def nougat_loader(file_path: str) -> List[Document]:
     loader = NougatPDFLoader(file_path)
@@ -125,16 +95,17 @@ def recursive_splitter(docs: List[Document]) -> List[Document]:
 def csdc_markdown_header_splitter(docs: List[Document]) -> List[Document]:
     markdown_splitter = MarkdownHeaderTextSplitter()
     # construct a fake document data
-    # data = [Document(page_content=sample_markdown_document, metadata=metadata_template)]
-    md_header_splits = markdown_splitter.split_text(docs)
-    for i, doc in enumerate(md_header_splits):
-        logger.info("content of chunk %s: %s", i, doc)
-    logger.info("csdc markdown splitter: {}".format(md_header_splits))
+    md_header_splits = []
+    for doc in docs:
+        md_header_splits = markdown_splitter.split_text(doc)
+        for i, doc in enumerate(md_header_splits):
+            logger.info("content of chunk %s: %s", i, doc)
+        md_header_splits.append(md_header_splits) 
+    logger.info("csdc markdown splitter: {}".format(md_header_splits))        
     return md_header_splits
 
 def documents_to_strings(documents: List[Document]) -> List[str]:
     serialized_documents = []
-
     for doc in documents:
         # Serialize the document into a JSON string
         serialized_doc = json.dumps({
@@ -143,7 +114,6 @@ def documents_to_strings(documents: List[Document]) -> List[str]:
             'type': doc.type
         })
         serialized_documents.append(serialized_doc)
-
     return serialized_documents
 
 def openai_embedding(docs: List[Document]) -> List[List[float]]:
@@ -152,6 +122,33 @@ def openai_embedding(docs: List[Document]) -> List[List[float]]:
     embeddings.embed_documents(docs)
     logger.info("openai embeddings: {}".format(embeddings))
     return embeddings
+
+@retry(stop=stop_after_attempt(3))
+def _aos_injection(document: Document) -> List[str]:
+    """
+    Returns:
+        List of ids from adding the texts into the vectorstore.
+    """
+    embeddings = create_sagemaker_embeddings_from_js_model(embeddingModelEndpoint, region)
+    docsearch = OpenSearchVectorSearch(
+        index_name='chatbot-index',
+        embedding_function=embeddings,
+        opensearch_url="https://{}".format(aosEndpoint),
+        http_auth = awsauth,
+        use_ssl = True,
+        verify_certs = True,
+        connection_class = RequestsHttpConnection
+    )
+    logger.info("Adding documents %s to OpenSearch with fixed index %s", document, 'chatbot-index')
+    res = docsearch.add_documents(documents=[document])
+    logger.info("Retry statistics: %s and response: %s", _aos_injection.retry.statistics, res)
+    return res
+
+def csdc_embedding(docs: List[Document]):
+    for doc in docs:
+        res = _aos_injection(doc)
+        logger.info("aos injection result: {}".format(res))
+    # TODO query the index with aos wrapper
 
 # utils to run embeddings with metrics of dimension and time
 def run_embeddings(embeddings_list, docs: List[str]):
@@ -194,7 +191,7 @@ def langchain_evalutor(query: str, docs_with_score: List[Tuple[str, float]]):
     pass
 
 # Preparing loader, splitter, and embeddings retriever list, iterate them to create comparasion matrix
-loader_list = [unstructured_loader]
+loader_list = [unstructured_loader, nougat_loader, llamaIndex_loader]
 splitter_list = [recursive_splitter, csdc_markdown_header_splitter]
 embeddings_list = [openai_embedding]
 retriever_list = [faiss_retriver]
@@ -272,15 +269,31 @@ class WorkflowExecutor:
 
 # Debugging purpose
 if __name__ == "__main__":
+    """
+    evaluate the retrieved documents with query and return summary result including metrics below:
+    1. # round of experiments
+    2. # of evaluation questions
+    3. chunk size and overlap size
+    4. split method
+    5. retrieval method
+    6. embedding algorithm & model
+    7. # of chunks retrieved
+    8. average relevance score of retrival
+    9. average similarity score of retrival
+    10. average time of retrival
+    """
 
     # load
-    docs = unstructured_loader("paper-01.pdf")
+    loader_res = unstructured_loader("benchmark.md")
 
     # split
-    docs = recursive_splitter(docs)
+    # docs = recursive_splitter(docs)
+    logger.info("loader result: {}".format(loader_res))
+    splitter_res = csdc_markdown_header_splitter(loader_res)
     
     # embedding
-    vector = openai_embedding(docs)
+    # vector = openai_embedding(splitter_res)
+    vector = csdc_embedding(splitter_res)
 
     # # retriever
     # query = "什么是思维链？"

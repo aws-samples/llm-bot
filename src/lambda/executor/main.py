@@ -159,31 +159,28 @@ def get_answer(query_input:str, history:list, zh_embedding_model_endpoint:str, e
     parsed_query = run_preprocess(query_knowledge) 
     debug_info["query_parser_info"] = parsed_query
     if parsed_query["query_lang"] == "zh":
-        zh_query_similarity_embedding = SagemakerEndpointVectorOrCross(prompt=query_knowledge,
-                                                                    endpoint_name=zh_embedding_model_endpoint, region_name=region,
-                                                                    model_type="vector", stop=None)
-        zh_query_relevance_embedding = SagemakerEndpointVectorOrCross(prompt="为这个句子生成表示以用于检索相关文章：" + query_knowledge,
-                                                                    endpoint_name=zh_embedding_model_endpoint, region_name=region,
-                                                                    model_type="vector", stop=None)
-        en_query_similarity_embedding = SagemakerEndpointVectorOrCross(prompt=parsed_query["translated_text"],
-                                                                    endpoint_name=en_embedding_model_endpoint, region_name=region,
-                                                                    model_type="vector", stop=None)
-        en_query_relevance_embedding = SagemakerEndpointVectorOrCross(prompt="Represent this sentence for searching relevant passages: " + parsed_query["translated_text"],
-                                                                    endpoint_name=en_embedding_model_endpoint, region_name=region,
-                                                                    model_type="vector", stop=None)
+        zh_query_similarity_embedding_prompt = query_knowledge
+        zh_query_relevance_embedding_prompt = "为这个句子生成表示以用于检索相关文章：" + query_knowledge
+        en_query_similarity_embedding_prompt = parsed_query["translated_text"]
+        en_query_relevance_embedding_prompt = "Represent this sentence for searching relevant passages: " + parsed_query["translated_text"]
     elif parsed_query["query_lang"] == "en":
-        en_query_similarity_embedding = SagemakerEndpointVectorOrCross(prompt=query_knowledge,
-                                                                    endpoint_name=en_embedding_model_endpoint, region_name=region,
-                                                                    model_type="vector", stop=None)
-        en_query_relevance_embedding = SagemakerEndpointVectorOrCross(prompt="Represent this sentence for searching relevant passages: " + query_knowledge,
-                                                                    endpoint_name=en_embedding_model_endpoint, region_name=region,
-                                                                    model_type="vector", stop=None)
-        zh_query_similarity_embedding = SagemakerEndpointVectorOrCross(prompt=parsed_query["translated_text"],
-                                                                    endpoint_name=en_embedding_model_endpoint, region_name=region,
-                                                                    model_type="vector", stop=None)
-        zh_query_relevance_embedding = SagemakerEndpointVectorOrCross(prompt="为这个句子生成表示以用于检索相关文章：" + parsed_query["translated_text"],
-                                                                    endpoint_name=en_embedding_model_endpoint, region_name=region,
-                                                                    model_type="vector", stop=None)
+        zh_query_similarity_embedding_prompt = parsed_query["translated_text"],
+        zh_query_relevance_embedding_prompt = "为这个句子生成表示以用于检索相关文章：" + parsed_query["translated_text"]
+        en_query_similarity_embedding_prompt = query_knowledge
+        en_query_relevance_embedding_prompt = "Represent this sentence for searching relevant passages: " + query_knowledge
+
+    zh_query_similarity_embedding = SagemakerEndpointVectorOrCross(prompt=zh_query_similarity_embedding_prompt,
+                                                                endpoint_name=zh_embedding_model_endpoint, region_name=region,
+                                                                model_type="vector", stop=None)
+    zh_query_relevance_embedding = SagemakerEndpointVectorOrCross(prompt=zh_query_relevance_embedding_prompt,
+                                                                endpoint_name=zh_embedding_model_endpoint, region_name=region,
+                                                                model_type="vector", stop=None)
+    en_query_similarity_embedding = SagemakerEndpointVectorOrCross(prompt=en_query_similarity_embedding_prompt,
+                                                                endpoint_name=en_embedding_model_endpoint, region_name=region,
+                                                                model_type="vector", stop=None)
+    en_query_relevance_embedding = SagemakerEndpointVectorOrCross(prompt=en_query_relevance_embedding_prompt,
+                                                                endpoint_name=en_embedding_model_endpoint, region_name=region,
+                                                                model_type="vector", stop=None)
     if enable_q_q_match:
         opensearch_knn_results = []
         opensearch_knn_response = aos_client.search(index_name=aos_faq_index, query_type="knn",
@@ -220,19 +217,14 @@ def get_answer(query_input:str, history:list, zh_embedding_model_endpoint:str, e
         filter = None
         if parsed_query["is_api_query"]:
             filter = [{"term": {"metadata.is_api": True}}]
-            opensearch_knn_response = aos_client.search(index_name=aos_ug_index, query_type="knn",
-                                                        query_term=zh_query_relevance_embedding, field="embedding", filter=filter, size=ug_result_num)
-            opensearch_knn_results.extend(organize_ug_results(opensearch_knn_response, aos_ug_index)[:ug_result_num])
-            opensearch_knn_response = aos_client.search(index_name=aos_ug_index, query_type="knn",
-                                                        query_term=en_query_relevance_embedding, field="embedding", filter=filter, size=ug_result_num)
-            opensearch_knn_results.extend(organize_ug_results(opensearch_knn_response, aos_ug_index)[:ug_result_num])
-        else:
-            opensearch_knn_response = aos_client.search(index_name=aos_ug_index, query_type="knn",
-                                                        query_term=zh_query_relevance_embedding, field="embedding", filter=filter, size=ug_result_num)
-            opensearch_knn_results.extend(organize_ug_results(opensearch_knn_response, aos_ug_index)[:ug_result_num])
-            opensearch_knn_response = aos_client.search(index_name=aos_ug_index, query_type="knn",
-                                                        query_term=en_query_relevance_embedding, field="embedding", filter=filter, size=ug_result_num)
-            opensearch_knn_results.extend(organize_ug_results(opensearch_knn_response, aos_ug_index)[:ug_result_num])
+
+        opensearch_knn_response = aos_client.search(index_name=aos_ug_index, query_type="knn",
+                                                    query_term=zh_query_relevance_embedding, field="embedding", filter=filter, size=ug_result_num)
+        opensearch_knn_results.extend(organize_ug_results(opensearch_knn_response, aos_ug_index)[:ug_result_num])
+        opensearch_knn_response = aos_client.search(index_name=aos_ug_index, query_type="knn",
+                                                    query_term=en_query_relevance_embedding, field="embedding", filter=filter, size=ug_result_num)
+        opensearch_knn_results.extend(organize_ug_results(opensearch_knn_response, aos_ug_index)[:ug_result_num])
+
         debug_info["knowledge_qa_knn_recall"] = remove_redundancy_debug_info(opensearch_knn_results)
         elpase_time = time.time() - start
         logger.info(f'runing time of opensearch_knn : {elpase_time}s seconds')

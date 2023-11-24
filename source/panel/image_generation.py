@@ -583,11 +583,14 @@ def upload_inference_job_api_params(s3_url, positive: str, negative: str):
 def generate_llm_image(initial_prompt: str, col, order: int):
     st.spinner()
     st.session_state.progress = 5
+    # Keep one progress bar instance for each column
     progress_bar = col.progress(st.session_state.progress)
 
     try:
         generate_llm_image_col(initial_prompt, col, order, progress_bar)
         st.session_state.succeed_count += 1
+        progress_bar.empty()
+        progress_bar.hidden = True
     except Exception as e:
         # Exceed the retry limit
         col.error("Image generation failed, please try again.")
@@ -675,8 +678,10 @@ if __name__ == "__main__":
 
             # output box to summarize the image grid if succeed at least one image
             if st.session_state.succeed_count > 0:
+                summary = st.subheader("In Summary...")
                 response = get_llm_summary(prompt)
-                st.text_area("Summary", value=response, height=200)
+                summary.subheader("Summary")
+                st.text_area("", label_visibility="hidden", value=response, height=200)
 
     except Exception as e:
         logger.exception(e)

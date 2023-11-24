@@ -585,14 +585,14 @@ def upload_inference_job_api_params(s3_url, positive: str, negative: str):
     return response
 
 
-def generate_llm_image(initial_prompt: str, col, order: int):
+def generate_llm_image(initial_prompt: str, col):
     st.spinner()
     st.session_state.progress = 5
     # Keep one progress bar instance for each column
     progress_bar = col.progress(st.session_state.progress)
 
     try:
-        generate_llm_image_col(initial_prompt, col, order, progress_bar)
+        generate_llm_image_col(initial_prompt, col, progress_bar)
         st.session_state.succeed_count += 1
         progress_bar.empty()
         progress_bar.hidden = True
@@ -603,7 +603,7 @@ def generate_llm_image(initial_prompt: str, col, order: int):
 
 
 @retry(stop=stop_after_attempt(1))
-def generate_llm_image_col(initial_prompt: str, col, order: int, progress_bar):
+def generate_llm_image_col(initial_prompt: str, col, progress_bar):
 
     positive_prompt, negative_prompt = get_llm_processed_prompts(initial_prompt)
     st.session_state.progress += 15
@@ -637,7 +637,7 @@ def select_checkpoint(user_list: List[str]):
 # Generator function
 def image_generator(prompt, cols):
     for idx, col in enumerate(cols):
-        yield generate_llm_image, (prompt, col, idx // 2)
+        yield generate_llm_image, (prompt, col)
 
 # main entry point for serve
 # python -m streamlit run image_generation.py --server.port 8088
@@ -664,7 +664,7 @@ if __name__ == "__main__":
         if button:
             st.session_state.warnings = []
             st.session_state.succeed_count = 0
-            # 2*2 layout image grid
+            # 2*2 layout image grids
             col1, col2 = st.columns(2)
             col3, col4 = st.columns(2)
             cols = [col1, col2, col3, col4]
@@ -686,7 +686,7 @@ if __name__ == "__main__":
                 summary = st.subheader("In Summary...")
                 response = get_llm_summary(prompt)
                 summary.subheader("Summary")
-                st.text_area("", label_visibility="hidden", value=response, height=200)
+                st.success(response)
 
     except Exception as e:
         logger.exception(e)

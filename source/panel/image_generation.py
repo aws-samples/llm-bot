@@ -93,9 +93,10 @@ sd_prompt = PromptTemplate.from_template(
     - Other notes please refer to the following example:
 
     The output should be a plain text in Python List format shown follows, no extra content added beside Positive Prompt, Negative Prompt.
-    [Positive Prompt: <detailed_prompt>,
-    Negative Prompt: <negative_prompt>,
-    Recommended Model Index List:
+    [
+        Positive Prompt: <detailed_prompt>,
+        Negative Prompt: <negative_prompt>,
+        Recommended Model Index List:
     ]
 
     For example:
@@ -230,12 +231,16 @@ def get_llm_processed_prompts(initial_prompt):
 
     # TODO, below paras is not stable and can be changed accord to PE, will update later
     # Define regular expressions
-    positive_pattern = r"Positive Prompt: \"(.*?),\s+Negative Prompt:"
-    negative_pattern = r"Negative Prompt: \"(.*?),\s+Recommended Model Index List:"
+    positive_pattern = r"Positive Prompt: (.*?),\s+Negative Prompt:"
+    negative_pattern = r"Negative Prompt: (.*?),\s+Recommended Model Index List:"
 
     # Extract data using regex
     positive_prompt = re.search(positive_pattern, response, re.DOTALL).group(1).strip()
     negative_prompt = re.search(negative_pattern, response, re.DOTALL).group(1).strip()
+
+    # remove the " and ' in the prompt
+    positive_prompt = positive_prompt.replace('"', '').replace("'", "")
+    negative_prompt = negative_prompt.replace('"', '').replace("'", "")
 
     logger.info("positive_pattern: {}".format(positive_prompt))
     logger.info("negative_pattern: {}".format(negative_prompt))

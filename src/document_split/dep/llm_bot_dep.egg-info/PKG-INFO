@@ -1,0 +1,10 @@
+Metadata-Version: 2.1
+Name: llm-bot-dep
+Version: 0.1.0
+Requires-Dist: langchain
+Requires-Dist: opensearch-py
+Requires-Dist: faiss_cpu
+Requires-Dist: sagemaker
+Requires-Dist: requests_aws4auth
+Requires-Dist: unstructured
+Requires-Dist: boto3

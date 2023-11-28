@@ -1,5 +1,6 @@
 import re
 import boto3
+from .service_intent_recognition import get_service_name
 
 
 # language symbols
@@ -88,11 +89,14 @@ def run_preprocess(query):
 
     translated_text = query_translate(query,lang=query_lang)
 
+    service_names = get_service_name(query)
+
     ret = {
         'query':query,
         'is_api_query': is_api,
         'translated_text': translated_text,
-        'query_lang':query_lang
+        'query_lang':query_lang,
+        'service_name': service_names
     }
 
     return ret  

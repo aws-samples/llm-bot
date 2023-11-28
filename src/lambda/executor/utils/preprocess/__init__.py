@@ -96,7 +96,7 @@ def run_preprocess(query):
         'is_api_query': is_api,
         'translated_text': translated_text,
         'query_lang':query_lang,
-        'service_name': service_names
+        'service_names': service_names
     }
 
     return ret  

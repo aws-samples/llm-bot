@@ -1,0 +1,246 @@
+Apache MXNet on AWS
+AWS Cloud Digital Interface SDK
+Amazon WorkSpaces Core
+AWS Mobile SDK for Unity
+AWS Blockchain Templates
+AWS Wavelength
+AWS Local Zones
+Amazon A2I
+AWS Console Mobile Application
+AWS IoT ExpressLink
+Red Hat OpenShift Service on AWS
+AWS Cryptographic Services Overview
+Porting Assistant for .NET
+Toolkit for .NET Refactoring
+Amazon Silk
+AWS Pricing Calculator
+AWS User Notifications
+AWS Artifact
+AWS Application Cost Profiler
+AWS IQ
+AWS Microservice Extractor for .NET
+AWS DeepComposer
+AWS CloudShell
+Amazon EBS
+AWS Application Composer
+AWS Chatbot
+Amazon Data Lifecycle Manager
+AWS IoT Device Management
+AWS End-of-Support Migration Program (EMP) for Windows Server
+Amazon Elastic Inference
+Savings Plans
+AWS Serverless Application Repository
+AWS Deep Learning Containers
+AWS Tools for PowerShell
+AWS App2Container
+Service Quotas
+Amazon WAM
+AWS Verified Access
+AWS IoT 1-Click
+Amazon CodeWhisperer
+AWS Private 5G
+AWS Shield
+AWS Health
+Amazon Elastic Transcoder
+AWS Entity Resolution
+AWS Cloud Control API
+Amazon Comprehend Medical
+AWS CodeStar
+AWS IoT RoboRunner
+AWS Schema Conversion Tool
+AWS Wickr
+Amazon Managed Service for Prometheus
+AWS DeepLens
+AWS Fault Injection Simulator
+AWS Signer
+AWS HealthImaging
+AWS AppFabric
+Amazon Honeycode
+AWS DeepRacer
+Amazon Security Lake
+AWS Deep Learning AMI
+Amazon Translate
+AWS Outposts
+AWS Cloud Map
+AWS AppConfig
+AWS HealthLake
+AWS Launch Wizard
+AWS Compute Optimizer
+Amazon Textract
+AWS Certificate Manager
+AWS Crypto Tools
+AWS Supply Chain
+Amazon Detective
+AWS VPN
+Amazon Verified Permissions
+Amazon MWAA
+AWS App Runner
+AWS Telco Network Builder
+AWS Application Discovery Service
+AWS Secrets Manager
+Amazon Braket
+Amazon Lookout for Metrics
+Amazon Machine Learning
+AWS Panorama
+Amazon Polly
+Auto Scaling
+Amazon Bedrock
+AWS Global Accelerator
+Amazon Lookout for Equipment
+AWS Elemental MediaStore
+Amazon MQ
+Amazon Lookout for Vision
+AWS IoT TwinMaker
+AWS Payment Cryptography
+Amazon CloudSearch
+Amazon Monitron
+AWS Cloud9
+AWS Ground Station
+AWS Direct Connect
+Amazon Macie
+Amazon WorkSpaces Web
+Amazon EFS
+Amazon SQS
+AWS CodeArtifact
+AWS RoboMaker
+AWS Mainframe Modernization
+AWS Data Exchange
+AWS Resilience Hub
+AWS IoT FleetWise
+Amazon DevOps Guru
+AWS Elemental MediaConnect
+Amazon Route 53 Application Recovery Controller
+AWS Transfer Family
+AWS CLI
+FreeRTOS
+AWS Incident Detection and Response
+AWS GovCloud (US)
+AWS License Manager
+Amazon Managed Blockchain
+AWS IoT Events
+AWS Data Pipeline
+AWS Batch
+Amazon Forecast
+AWS IoT Analytics
+AWS Elemental MediaTailor
+AWS Network Firewall
+AWS DataSync
+Amazon EC2 Image Builder
+AWS Marketplace
+Amazon Keyspaces (for Apache Cassandra)
+Amazon Cloud Directory
+AWS Well-Architected Tool
+AWS X-Ray
+Amazon MemoryDB for Redis
+Amazon Location Service
+AWS CloudTrail
+NICE DCV
+Amazon Transcribe
+Amazon QLDB
+AWS AppSync
+Amazon WorkSpaces
+Amazon Nimble Studio
+Amazon FinSpace
+AWS App Mesh
+AWS SAM
+AWS Proton
+Amazon ECR
+AWS HealthOmics
+AWS Amplify
+AWS Audit Manager
+Amazon WorkDocs
+Amazon WorkMail
+AWS CodePipeline
+Amazon MSK
+AWS Device Farm
+Amazon SWF
+AWS Private Certificate Authority
+AWS Control Tower
+Amazon Interactive Video Service
+AWS Backup
+Amazon DocumentDB
+AWS IAM Identity Center
+Amazon EKS
+Elastic Load Balancing
+AWS Elemental MediaConvert
+AWS Account Management
+Amazon AppFlow
+AWS Migration Hub
+AppStream 2.0
+AWS Resource Explorer
+AWS ParallelCluster
+AWS CodeBuild
+Amazon SNS
+Amazon DataZone
+AWS KMS
+AWS Application Migration Service
+Amazon CodeGuru
+Amazon Comprehend
+AWS Elastic Disaster Recovery
+Amazon Lightsail
+AWS CodeCommit
+AWS Directory Service
+Amazon GuardDuty
+Amazon Timestream
+Amazon Managed Service for Apache Flink
+AWS Step Functions
+AWS CodeDeploy
+AWS Lake Formation
+Amazon Inspector
+AWS Snow Family
+Amazon Personalize
+Amazon EventBridge
+AWS CloudHSM
+AWS Clean Rooms
+AWS IoT SiteWise
+Amazon GameLift
+AWS Elemental MediaPackage
+Amazon API Gateway
+Amazon Kendra
+Amazon Managed Grafana
+Amazon OpenSearch Service
+AWS Service Catalog
+AWS WAF
+Amazon Cognito
+AWS CloudFormation
+Amazon Pinpoint
+Amazon CloudFront
+AWS IoT Greengrass
+AWS Storage Gateway
+Amazon Athena
+AWS Lambda
+Amazon SES
+Amazon Rekognition
+AWS Billing and Cost Management
+Amazon ElastiCache
+Amazon Chime
+AWS Firewall Manager
+Amazon Kinesis
+AWS OpsWorks
+Amazon FSx
+Amazon VPC
+Amazon Neptune
+AWS Elastic Beanstalk
+Amazon ECS
+AWS Elemental MediaLive
+AWS Config
+Amazon DynamoDB
+Amazon Lex
+Amazon Route 53
+AWS Glue
+AWS Security Hub
+AWS Database Migration Service
+Amazon Chime SDK
+Amazon CloudWatch
+Amazon QuickSight
+Amazon EMR
+AWS IoT Core
+Amazon S3
+AWS Systems Manager
+AWS Managed Services
+Amazon Aurora
+Amazon Connect
+Amazon Redshift
+Amazon SageMaker
+AWS Identity and Access Management
+Amazon EC2

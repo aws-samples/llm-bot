@@ -4,11 +4,13 @@ import os
 import boto3
 import time
 import copy
+import traceback
 from preprocess import run_preprocess  
 from aos_utils import LLMBotOpenSearchClient
 from llmbot_utils import QueryType, combine_recalls, concat_recall_knowledge, process_input_messages
 from ddb_utils import get_session, update_session
 from sm_utils import SagemakerEndpointVectorOrCross
+from llm import generate as llm_generate
 
 logger = logging.getLogger()
 handler = logging.StreamHandler()
@@ -30,6 +32,9 @@ llm_endpoint = os.environ.get('llm_endpoint', "")
 chat_session_table = os.environ.get('chat_session_table', "")
 
 sm_client = boto3.client("sagemaker-runtime")
+
+# print(aos_endpoint)
+# print(sfg)
 aos_client = LLMBotOpenSearchClient(aos_endpoint)
 
 class APIException(Exception):
@@ -139,7 +144,9 @@ def remove_redundancy_debug_info(results):
 
 def get_answer(query_input:str, history:list, zh_embedding_model_endpoint:str, en_embedding_model_endpoint:str,
                cross_model_endpoint:str, rerank_model_endpoint:str, llm_model_endpoint:str,
-               aos_faq_index:str, aos_ug_index:str, enable_knowledge_qa:bool, temperature: float, enable_q_q_match:bool):
+               aos_faq_index:str, aos_ug_index:str, enable_knowledge_qa:bool, temperature: float, enable_q_q_match:bool,
+               llm_model_id=None
+            ):
     # 1. concatenate query_input and history to unified prompt
     query_knowledge = ''.join([query_input] + [row[0] for row in history][::-1])
     debug_info = {
@@ -164,7 +171,7 @@ def get_answer(query_input:str, history:list, zh_embedding_model_endpoint:str, e
         en_query_similarity_embedding_prompt = parsed_query["translated_text"]
         en_query_relevance_embedding_prompt = "Represent this sentence for searching relevant passages: " + parsed_query["translated_text"]
     elif parsed_query["query_lang"] == "en":
-        zh_query_similarity_embedding_prompt = parsed_query["translated_text"],
+        zh_query_similarity_embedding_prompt = parsed_query["translated_text"]
         zh_query_relevance_embedding_prompt = "为这个句子生成表示以用于检索相关文章：" + parsed_query["translated_text"]
         en_query_similarity_embedding_prompt = query_knowledge
         en_query_relevance_embedding_prompt = "Represent this sentence for searching relevant passages: " + query_knowledge
@@ -285,23 +292,38 @@ def get_answer(query_input:str, history:list, zh_embedding_model_endpoint:str, e
     parameters = {'temperature': temperature}
     try:
         # generate_answer
-        answer = SagemakerEndpointVectorOrCross(prompt=query_input,
-                                                endpoint_name=llm_model_endpoint,
-                                                region_name=region,
-                                                model_type="answer",
-                                                stop=None,
-                                                history=history,
-                                                parameters=parameters,
-                                                context=recall_knowledge_str[:2560])
-        debug_info["knowledge_qa_llm"] = {"prompt": query_input, "context": recall_knowledge_str, "answer": answer}
+        # answer = SagemakerEndpointVectorOrCross(prompt=query_input,
+        #                                         endpoint_name=llm_model_endpoint,
+        #                                         region_name=region,
+        #                                         model_type="answer",
+        #                                         stop=None,
+        #                                         history=history,
+        #                                         parameters=parameters,
+        #                                         context=recall_knowledge_str[:2560])
+        generate_input = dict(
+            model_id = llm_model_id,
+            query = query_input,
+            contexts = rerank_knowledge,
+            history=history,
+            region_name=region,
+            parameters=parameters,
+            context_num = 2,
+            model_type="answer",
+            llm_model_endpoint=llm_model_endpoint
+        )
+        ret = llm_generate(**generate_input)
+        answer = ret['answer']
+        debug_info["knowledge_qa_llm"] = ret
     except Exception as e:
-        logger.info(f'Exceptions: str({e})')
+        logger.info(f'{traceback.format_exc()}')
         answer = ""
     return answer, query_type, sources, recall_knowledge_str, debug_info
 
 def main_entry(session_id:str, query_input:str, history:list, zh_embedding_model_endpoint:str, en_embedding_model_endpoint:str,
                cross_model_endpoint:str, rerank_model_endpoint:str, llm_model_endpoint:str,
-               aos_faq_index:str, aos_ug_index:str, enable_knowledge_qa:bool, temperature: float, enable_q_q_match:bool):
+               aos_faq_index:str, aos_ug_index:str, enable_knowledge_qa:bool, temperature: float, enable_q_q_match:bool,
+               llm_model_id=None
+               ):
     """
     Entry point for the Lambda function.
 
@@ -319,6 +341,7 @@ def main_entry(session_id:str, query_input:str, history:list, zh_embedding_model
 
     return: answer(str)
     """
+
     answer, query_type, sources, recall_knowledge_str, debug_info = get_answer(query_input,
                history,
                zh_embedding_model_endpoint,
@@ -330,7 +353,9 @@ def main_entry(session_id:str, query_input:str, history:list, zh_embedding_model
                aos_ug_index,
                enable_knowledge_qa,
                temperature,
-               enable_q_q_match)
+               enable_q_q_match,
+               llm_model_id=llm_model_id
+               )
     # 7. update_session
     start = time.time()
     update_session(session_id=session_id, chat_session_table=chat_session_table, 
@@ -366,6 +391,7 @@ def lambda_handler(event, context):
     # Get request body
     event_body = json.loads(event['body'])
     model = event_body['model']
+    llm_model_id = event_body.get('llm_model_id',None)
     # aos_faq_index = event_body['aos_faq_index']
     # aos_ug_index = event_body['aos_ug_index']
     messages = event_body['messages']
@@ -388,7 +414,9 @@ def lambda_handler(event, context):
     answer, sources, debug_info = main_entry(session_id, question, history, zh_embedding_endpoint, en_embedding_endpoint,
                                              cross_endpoint, rerank_endpoint, llm_endpoint,
                                              aos_faq_index, aos_ug_index, knowledge_qa_flag,
-                                             temperature, enable_q_q_match)
+                                             temperature, enable_q_q_match,
+                                             llm_model_id=llm_model_id
+                                             )
     main_entry_elpase = time.time() - main_entry_start  
     logger.info(f'runing time of main_entry : {main_entry_elpase}s seconds')
 

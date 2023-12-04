@@ -22,9 +22,15 @@ class TestDict(unittest.TestCase):
             "service": ["Amazon S3","AWS Backup"]
         },
         {
+            "query":"AWS Secrets Manager如何为 Amazon RDS密钥设置自动轮换？",
+            "service":['AWS Secrets Manager', 'Amazon RDS']
+        },
+        {
             "query":'如何设置AWS IAM策略禁用特定的 AWS 区域？',
             "service": ["AWS IAM Identity Center"]
-        }]
+        }
+    
+        ]
     
 
     def test_valid(self):

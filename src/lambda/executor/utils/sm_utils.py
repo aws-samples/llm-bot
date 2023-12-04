@@ -197,7 +197,7 @@ def SagemakerEndpointVectorOrCross(prompt: str, endpoint_name: str, region_name:
         embeddings = SagemakerEndpointEmbeddings(
             endpoint_name=endpoint_name,
             region_name=region_name,
-            content_handler=content_handler,
+            content_handler=content_handler
         )
         query_result = embeddings.embed_query(prompt)
         return query_result

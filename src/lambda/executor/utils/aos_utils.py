@@ -5,6 +5,7 @@ from requests_aws4auth import AWS4Auth
 from opensearchpy import OpenSearch, RequestsHttpConnection
 
 credentials = boto3.Session().get_credentials()
+
 region = boto3.Session().region_name
 awsauth = AWS4Auth(credentials.access_key, credentials.secret_key, region, 'es', session_token=credentials.token)
 

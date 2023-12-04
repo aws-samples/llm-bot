@@ -91,6 +91,7 @@ def organize_faq_results(response, index_name):
             result["source"] = aos_hit['_source']['metadata']['source']
             result["score"] = aos_hit["_score"]
             result["detail"] = aos_hit['_source']
+            result["content"] = aos_hit['_source']['content']
             result["answer"] = get_faq_answer(result["source"], index_name)
             result["doc"] = get_faq_content(result["source"], index_name)
         except:
@@ -104,9 +105,9 @@ def organize_faq_results(response, index_name):
 def get_ug_content(source, index_name):
     opensearch_query_response = aos_client.search(index_name=index_name,
                                                   query_type="basic", query_term=source,
-                                                  field="metadata.source")
+                                                  field="metadata.source", size=100)
     for r in opensearch_query_response["hits"]["hits"]:
-        if r["_source"]["metadata"]["field"] == "content":
+        if r["_source"]["metadata"]["field"] == "all_text":
             return r["_source"]["content"]
     return ""
 
@@ -124,6 +125,7 @@ def organize_ug_results(response, index_name):
         result["source"] = aos_hit['_source']['metadata']['source']
         result["score"] = aos_hit["_score"]
         result["detail"] = aos_hit['_source']
+        result["content"] = aos_hit['_source']['content']
         result["doc"] = get_ug_content(result["source"], index_name)
         # result.update(aos_hit["_source"])
         results.append(result)
@@ -179,10 +181,10 @@ def get_answer(query_input:str, history:list, zh_embedding_model_endpoint:str, e
                                                                     endpoint_name=en_embedding_model_endpoint, region_name=region,
                                                                     model_type="vector", stop=None)
         zh_query_similarity_embedding = SagemakerEndpointVectorOrCross(prompt=parsed_query["translated_text"],
-                                                                    endpoint_name=en_embedding_model_endpoint, region_name=region,
+                                                                    endpoint_name=zh_embedding_model_endpoint, region_name=region,
                                                                     model_type="vector", stop=None)
         zh_query_relevance_embedding = SagemakerEndpointVectorOrCross(prompt="为这个句子生成表示以用于检索相关文章：" + parsed_query["translated_text"],
-                                                                    endpoint_name=en_embedding_model_endpoint, region_name=region,
+                                                                    endpoint_name=zh_embedding_model_endpoint, region_name=region,
                                                                     model_type="vector", stop=None)
     if enable_q_q_match:
         opensearch_knn_results = []
@@ -207,7 +209,7 @@ def get_answer(query_input:str, history:list, zh_embedding_model_endpoint:str, e
     if enable_knowledge_qa:
         # 2. get AOS knn recall 
         faq_result_num = 2
-        ug_result_num = 10
+        ug_result_num = 100
         start = time.time()
         opensearch_knn_results = []
         opensearch_knn_response = aos_client.search(index_name=aos_faq_index, query_type="knn",
@@ -264,14 +266,14 @@ def get_answer(query_input:str, history:list, zh_embedding_model_endpoint:str, e
         #         recall_knowledge_cross.append({'doc': knowledge['doc'], 'score': score, 'source': knowledge['source']})
         rerank_pair = []
         for knowledge in recall_knowledge:
-            rerank_pair.append([query_knowledge, knowledge["doc"]])
+            rerank_pair.append([query_knowledge, knowledge["content"]])
         score_list = json.loads(SagemakerEndpointVectorOrCross(prompt=json.dumps(rerank_pair), endpoint_name=rerank_model_endpoint,
                                                           region_name=region, model_type="rerank", stop=None))
         rerank_knowledge = []
         for knowledge, score in zip(recall_knowledge, score_list):
-            if score > 0:
-                knowledge["rerank_score"] = score
-                rerank_knowledge.append(knowledge)
+            # if score > 0:
+            knowledge["rerank_score"] = score
+            rerank_knowledge.append(knowledge)
         rerank_knowledge.sort(key=lambda x:x["rerank_score"], reverse=True)
         debug_info["knowledge_qa_rerank"] = rerank_knowledge
 

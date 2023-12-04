@@ -17,13 +17,13 @@ def combine_recalls(opensearch_knn_respose, opensearch_query_response):
     '''
     knn_threshold = 0.2
     inverted_theshold = 5.0
-    filter_knn_result = { item["doc"] : [item['source'], item["score"]] for item in opensearch_knn_respose if item["score"]> knn_threshold }
-    filter_inverted_result = { item["doc"] : [item['source'], item["score"]] for item in opensearch_query_response if item["score"]> inverted_theshold }
+    filter_knn_result = { item["content"] : [item['source'], item["score"], item["doc"]] for item in opensearch_knn_respose if item["score"]> knn_threshold }
+    filter_inverted_result = { item["content"] : [item['source'], item["score"], item["doc"]] for item in opensearch_query_response if item["score"]> inverted_theshold }
 
     combine_result = []
-    for doc, doc_info in filter_knn_result.items():
+    for content, doc_info in filter_knn_result.items():
         # if doc in filter_inverted_result.keys():
-        combine_result.append({ "doc" : doc, "score" : doc_info[1], "source" : doc_info[0] })
+        combine_result.append({ "content": content, "doc" : doc_info[2], "score" : doc_info[1], "source" : doc_info[0] })
 
     return combine_result
 

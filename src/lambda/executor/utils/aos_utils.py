@@ -79,6 +79,7 @@ class LLMBotOpenSearchClient:
         """
         if filter:
             query = {
+                "size": size,
                 "query" : { 
                     "bool": {
                         "filter": {

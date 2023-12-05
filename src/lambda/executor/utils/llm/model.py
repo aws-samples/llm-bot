@@ -6,8 +6,8 @@ import traceback
 
 
 
-from sm_utils import SagemakerEndpointVectorOrCross
-from llmbot_utils import concat_recall_knowledge
+from ..sm_utils import SagemakerEndpointVectorOrCross
+from ..llmbot_utils import concat_recall_knowledge
 from .prompt_template import claude2_rag_template_render
 
 

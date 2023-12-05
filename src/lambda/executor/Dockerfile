@@ -4,6 +4,6 @@ COPY requirements.txt  .
 RUN  pip3 install -r requirements.txt --target "/var/task"
 
 COPY main.py /var/task
-COPY ./utils/ /var/task/
+COPY ./utils /var/task/utils
 
 CMD [ "main.lambda_handler" ]

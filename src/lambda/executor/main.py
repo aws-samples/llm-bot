@@ -5,12 +5,12 @@ import boto3
 import time
 import copy
 import traceback
-from preprocess import run_preprocess  
-from aos_utils import LLMBotOpenSearchClient
-from llmbot_utils import QueryType, combine_recalls, concat_recall_knowledge, process_input_messages
-from ddb_utils import get_session, update_session
-from sm_utils import SagemakerEndpointVectorOrCross
-from llm import generate as llm_generate
+from utils.preprocess import run_preprocess  
+from utils.aos_utils import LLMBotOpenSearchClient
+from utils.llmbot_utils import QueryType, combine_recalls, concat_recall_knowledge, process_input_messages
+from utils.ddb_utils import get_session, update_session
+from utils.sm_utils import SagemakerEndpointVectorOrCross
+from utils.llm import generate as llm_generate
 
 logger = logging.getLogger()
 handler = logging.StreamHandler()
@@ -144,27 +144,14 @@ def remove_redundancy_debug_info(results):
                 del result["detail"][field]
     return filtered_results
 
-def get_answer(query_input:str, history:list, zh_embedding_model_endpoint:str, en_embedding_model_endpoint:str,
-               cross_model_endpoint:str, rerank_model_endpoint:str, llm_model_endpoint:str,
-               aos_faq_index:str, aos_ug_index:str, enable_knowledge_qa:bool, temperature: float, enable_q_q_match:bool,
-               llm_model_id=None
-            ):
-    # 1. concatenate query_input and history to unified prompt
-    query_knowledge = ''.join([query_input] + [row[0] for row in history][::-1])
-    debug_info = {
-        "query": query_input,
-        "query_parser_info": {},
-        "q_q_match_info": {},
-        "knowledge_qa_knn_recall": {},
-        "knowledge_qa_boolean_recall": {},
-        "knowledge_qa_combined_recall": {},
-        "knowledge_qa_cross_model_sort": {},
-        "knowledge_qa_llm": {},
-        "knowledge_qa_rerank": {},
-    }
-
-    # 2. get AOS q-q-knn recall 
+def parse_query(query_input:str, history:list,
+                zh_embedding_model_endpoint:str, en_embedding_model_endpoint:str,
+                debug_info:dict):
     start = time.time()
+    # concatenate query_input and history to unified prompt
+    query_knowledge = ''.join([query_input] + [row[0] for row in history][::-1])
+
+    # get query embedding
     parsed_query = run_preprocess(query_knowledge) 
     debug_info["query_parser_info"] = parsed_query
     if parsed_query["query_lang"] == "zh":
@@ -177,152 +164,100 @@ def get_answer(query_input:str, history:list, zh_embedding_model_endpoint:str, e
         zh_query_relevance_embedding_prompt = "为这个句子生成表示以用于检索相关文章：" + parsed_query["translated_text"]
         en_query_similarity_embedding_prompt = query_knowledge
         en_query_relevance_embedding_prompt = "Represent this sentence for searching relevant passages: " + query_knowledge
-    zh_query_similarity_embedding = SagemakerEndpointVectorOrCross(prompt=zh_query_similarity_embedding_prompt,
+    parsed_query["zh_query_similarity_embedding"] = SagemakerEndpointVectorOrCross(prompt=zh_query_similarity_embedding_prompt,
                                                                 endpoint_name=zh_embedding_model_endpoint, region_name=region,
                                                                 model_type="vector", stop=None)
-    zh_query_relevance_embedding = SagemakerEndpointVectorOrCross(prompt=zh_query_relevance_embedding_prompt,
+    parsed_query["zh_query_relevance_embedding"] = SagemakerEndpointVectorOrCross(prompt=zh_query_relevance_embedding_prompt,
                                                                 endpoint_name=zh_embedding_model_endpoint, region_name=region,
                                                                 model_type="vector", stop=None)
-    en_query_similarity_embedding = SagemakerEndpointVectorOrCross(prompt=en_query_similarity_embedding_prompt,
+    parsed_query["en_query_similarity_embedding"] = SagemakerEndpointVectorOrCross(prompt=en_query_similarity_embedding_prompt,
                                                                 endpoint_name=en_embedding_model_endpoint, region_name=region,
                                                                 model_type="vector", stop=None)
-    en_query_relevance_embedding = SagemakerEndpointVectorOrCross(prompt=en_query_relevance_embedding_prompt,
+    parsed_query["en_query_relevance_embedding"] = SagemakerEndpointVectorOrCross(prompt=en_query_relevance_embedding_prompt,
                                                                 endpoint_name=en_embedding_model_endpoint, region_name=region,
                                                                 model_type="vector", stop=None)
-    if enable_q_q_match:
-        opensearch_knn_results = []
-        opensearch_knn_response = aos_client.search(index_name=aos_faq_index, query_type="knn",
-                                                    query_term=zh_query_similarity_embedding, field="embedding", size=2)
-        opensearch_knn_results.extend(organize_faq_results(opensearch_knn_response, aos_faq_index))
-        opensearch_knn_response = aos_client.search(index_name=aos_faq_index, query_type="knn",
-                                                    query_term=en_query_similarity_embedding, field="embedding", size=2)
-        opensearch_knn_results.extend(organize_faq_results(opensearch_knn_response, aos_faq_index))
-        # logger.info(json.dumps(opensearch_knn_response, ensure_ascii=False))
-        elpase_time = time.time() - start
-        logger.info(f'runing time of opensearch_knn : {elpase_time}s seconds')
-        if len(opensearch_knn_results) > 0:
-            debug_info["q_q_match_info"] = remove_redundancy_debug_info(opensearch_knn_results[:3])
-            if opensearch_knn_results[0]["score"] >= 0.9:
-                source = opensearch_knn_results[0]["source"]
-                answer = opensearch_knn_results[0]["answer"]
-                sources = [source]
-                recall_knowledge_str = ""
-                query_type = QueryType.KnowledgeQuery
-                return answer, query_type, sources, recall_knowledge_str, debug_info
-    if enable_knowledge_qa:
-        # 2. get AOS knn recall 
-        faq_result_num = 2
-        ug_result_num = 100
-        start = time.time()
-        opensearch_knn_results = []
-        opensearch_knn_response = aos_client.search(index_name=aos_faq_index, query_type="knn",
-                                                    query_term=zh_query_relevance_embedding, field="embedding", size=faq_result_num)
-        opensearch_knn_results.extend(organize_faq_results(opensearch_knn_response, aos_faq_index)[:faq_result_num])
-        opensearch_knn_response = aos_client.search(index_name=aos_faq_index, query_type="knn",
-                                                    query_term=en_query_relevance_embedding, field="embedding", size=faq_result_num)
-        opensearch_knn_results.extend(organize_faq_results(opensearch_knn_response, aos_faq_index)[:faq_result_num])
-        # logger.info(json.dumps(opensearch_knn_response, ensure_ascii=False))
-        filter = None
-        if parsed_query["is_api_query"]:
-            filter = [{"term": {"metadata.is_api": True}}]
+    elpase_time = time.time() - start
+    logger.info(f'runing time of parse query: {elpase_time}s seconds')
+    return parsed_query
 
-        opensearch_knn_response = aos_client.search(index_name=aos_ug_index, query_type="knn",
-                                                    query_term=zh_query_relevance_embedding, field="embedding", filter=filter, size=ug_result_num)
-        opensearch_knn_results.extend(organize_ug_results(opensearch_knn_response, aos_ug_index)[:ug_result_num])
-        opensearch_knn_response = aos_client.search(index_name=aos_ug_index, query_type="knn",
-                                                    query_term=en_query_relevance_embedding, field="embedding", filter=filter, size=ug_result_num)
-        opensearch_knn_results.extend(organize_ug_results(opensearch_knn_response, aos_ug_index)[:ug_result_num])
+def q_q_match(parsed_query, debug_info):
+    start = time.time()
+    opensearch_knn_results = []
+    opensearch_knn_response = aos_client.search(index_name=aos_faq_index, query_type="knn",
+                                                query_term=parsed_query["zh_query_similarity_embedding"], field="embedding", size=2)
+    opensearch_knn_results.extend(organize_faq_results(opensearch_knn_response, aos_faq_index))
+    opensearch_knn_response = aos_client.search(index_name=aos_faq_index, query_type="knn",
+                                                query_term=parsed_query["en_query_similarity_embedding"], field="embedding", size=2)
+    opensearch_knn_results.extend(organize_faq_results(opensearch_knn_response, aos_faq_index))
+    # logger.info(json.dumps(opensearch_knn_response, ensure_ascii=False))
+    elpase_time = time.time() - start
+    logger.info(f'runing time of opensearch_knn : {elpase_time}s seconds')
+    answer = None
+    sources = None
+    if len(opensearch_knn_results) > 0:
+        debug_info["q_q_match_info"] = remove_redundancy_debug_info(opensearch_knn_results[:3])
+        if opensearch_knn_results[0]["score"] >= 0.9:
+            source = opensearch_knn_results[0]["source"]
+            answer = opensearch_knn_results[0]["answer"]
+            sources = [source]
+            return answer, sources
+    return answer, sources
 
-        debug_info["knowledge_qa_knn_recall"] = remove_redundancy_debug_info(opensearch_knn_results)
-        elpase_time = time.time() - start
-        logger.info(f'runing time of opensearch_knn : {elpase_time}s seconds')
-        
-        # 3. get AOS invertedIndex recall
-        start = time.time()
-        opensearch_query_results = []
-        # opensearch_query_response = aos_client.search(index_name=aos_faq_index, query_type="basic", query_term=query_knowledge, field="text")
-        # opensearch_query_results.extend(organize_faq_results(opensearch_query_response))
-        # opensearch_query_response = aos_client.search(index_name=aos_ug_index, query_type="basic", query_term=query_knowledge, field="title")
-        # opensearch_query_results.extend(organize_ug_results(opensearch_query_response))
-        # logger.info(json.dumps(opensearch_query_response, ensure_ascii=False))
-        elpase_time = time.time() - start
-        logger.info(f'runing time of opensearch_query : {elpase_time}s seconds')
-        debug_info["knowledge_qa_boolean_recall"] = remove_redundancy_debug_info(opensearch_query_results[:20])
+def get_relevant_documents(parsed_query, rerank_model_endpoint:str, aos_faq_index:str, aos_ug_index:str, debug_info):
+    # 1. get AOS knn recall 
+    faq_result_num = 2
+    ug_result_num = 10
+    start = time.time()
+    opensearch_knn_results = []
+    opensearch_knn_response = aos_client.search(index_name=aos_faq_index, query_type="knn",
+                                                query_term=parsed_query["zh_query_relevance_embedding"], field="embedding", size=faq_result_num)
+    opensearch_knn_results.extend(organize_faq_results(opensearch_knn_response, aos_faq_index)[:faq_result_num])
+    opensearch_knn_response = aos_client.search(index_name=aos_faq_index, query_type="knn",
+                                                query_term=parsed_query["en_query_relevance_embedding"], field="embedding", size=faq_result_num)
+    opensearch_knn_results.extend(organize_faq_results(opensearch_knn_response, aos_faq_index)[:faq_result_num])
+    # logger.info(json.dumps(opensearch_knn_response, ensure_ascii=False))
+    filter = None
+    if parsed_query["is_api_query"]:
+        filter = [{"term": {"metadata.is_api": True}}]
 
-        # 4. combine these two opensearch_knn_response and opensearch_query_response
-        recall_knowledge = combine_recalls(opensearch_knn_results, opensearch_query_results)
-        # recall_knowledge.sort(key=lambda x: x["score"], reverse=True)
-        # debug_info["knowledge_qa_combined_recall"] = recall_knowledge
-        
-        # 5. Predict correlation score using cross model
-        # recall_knowledge_cross = []
-        # for knowledge in recall_knowledge:
-        #     # get score using cross model
-        #     score = float(SagemakerEndpointVectorOrCross(prompt=query_knowledge, endpoint_name=cross_model_endpoint, region_name=region, model_type="cross", stop=None, context=knowledge['doc']))
-        #     # logger.info(json.dumps({'doc': knowledge['doc'], 'score': score, 'source': knowledge['source']}, ensure_ascii=False))
-        #     if score > 0.8:
-        #         recall_knowledge_cross.append({'doc': knowledge['doc'], 'score': score, 'source': knowledge['source']})
-        rerank_pair = []
-        for knowledge in recall_knowledge:
-            rerank_pair.append([query_knowledge, knowledge["content"]])
-        score_list = json.loads(SagemakerEndpointVectorOrCross(prompt=json.dumps(rerank_pair), endpoint_name=rerank_model_endpoint,
-                                                          region_name=region, model_type="rerank", stop=None))
-        rerank_knowledge = []
-        for knowledge, score in zip(recall_knowledge, score_list):
-            # if score > 0:
-            knowledge["rerank_score"] = score
-            rerank_knowledge.append(knowledge)
-        rerank_knowledge.sort(key=lambda x:x["rerank_score"], reverse=True)
-        debug_info["knowledge_qa_rerank"] = rerank_knowledge
+    opensearch_knn_response = aos_client.search(index_name=aos_ug_index, query_type="knn",
+                                                query_term=parsed_query["zh_query_relevance_embedding"], field="embedding", filter=filter, size=ug_result_num)
+    opensearch_knn_results.extend(organize_ug_results(opensearch_knn_response, aos_ug_index)[:ug_result_num])
+    opensearch_knn_response = aos_client.search(index_name=aos_ug_index, query_type="knn",
+                                                query_term=parsed_query["en_query_relevance_embedding"], field="embedding", filter=filter, size=ug_result_num)
+    opensearch_knn_results.extend(organize_ug_results(opensearch_knn_response, aos_ug_index)[:ug_result_num])
 
-        # recall_knowledge_cross.sort(key=lambda x: x["score"], reverse=True)
-        # debug_info["knowledge_qa_cross_model_sort"] = recall_knowledge_cross[:10]
+    debug_info["knowledge_qa_knn_recall"] = remove_redundancy_debug_info(opensearch_knn_results)
+    elpase_time = time.time() - start
+    logger.info(f'runing time of opensearch_knn : {elpase_time}s seconds')
+    
+    # 2. get AOS invertedIndex recall
+    opensearch_query_results = []
 
-        # recall_knowledge_str = concat_recall_knowledge(recall_knowledge_cross[:2])
-        recall_knowledge_str = concat_recall_knowledge(rerank_knowledge[:2])
-        # sources = list(set([item["source"] for item in recall_knowledge_cross[:2]]))
-        sources = list(set([item["source"] for item in rerank_knowledge[:2]]))
-        query_type = QueryType.KnowledgeQuery
-        elpase_time = time.time() - start
-        logger.info(f'runing time of recall knowledge : {elpase_time}s seconds')
-    else:
-        recall_knowledge_str = ""
-        query_type = QueryType.Conversation
+    # 3. combine these two opensearch_knn_response and opensearch_query_response
+    recall_knowledge = combine_recalls(opensearch_knn_results, opensearch_query_results)
+    
+    rerank_pair = []
+    for knowledge in recall_knowledge:
+        rerank_pair.append([parsed_query["query"], knowledge["content"]])
+    score_list = json.loads(SagemakerEndpointVectorOrCross(prompt=json.dumps(rerank_pair), endpoint_name=rerank_model_endpoint,
+                                                        region_name=region, model_type="rerank", stop=None))
+    rerank_knowledge = []
+    for knowledge, score in zip(recall_knowledge, score_list):
+        # if score > 0:
+        knowledge["rerank_score"] = score
+        rerank_knowledge.append(knowledge)
+    rerank_knowledge.sort(key=lambda x:x["rerank_score"], reverse=True)
+    debug_info["knowledge_qa_rerank"] = rerank_knowledge
 
-    # 6. generate answer using question and recall_knowledge
-    parameters = {'temperature': temperature}
-    try:
-        # generate_answer
-        # answer = SagemakerEndpointVectorOrCross(prompt=query_input,
-        #                                         endpoint_name=llm_model_endpoint,
-        #                                         region_name=region,
-        #                                         model_type="answer",
-        #                                         stop=None,
-        #                                         history=history,
-        #                                         parameters=parameters,
-        #                                         context=recall_knowledge_str[:2560])
-        generate_input = dict(
-            model_id = llm_model_id,
-            query = query_input,
-            contexts = rerank_knowledge,
-            history=history,
-            region_name=region,
-            parameters=parameters,
-            context_num = 2,
-            model_type="answer",
-            llm_model_endpoint=llm_model_endpoint
-        )
-        ret = llm_generate(**generate_input)
-        answer = ret['answer']
-        debug_info["knowledge_qa_llm"] = ret
-    except Exception as e:
-        logger.info(f'{traceback.format_exc()}')
-        answer = ""
-    return answer, query_type, sources, recall_knowledge_str, debug_info
+    elpase_time = time.time() - start
+    logger.info(f'runing time of recall knowledge : {elpase_time}s seconds')
+
+    return rerank_knowledge
 
 def main_entry(session_id:str, query_input:str, history:list, zh_embedding_model_endpoint:str, en_embedding_model_endpoint:str,
-               cross_model_endpoint:str, rerank_model_endpoint:str, llm_model_endpoint:str,
-               aos_faq_index:str, aos_ug_index:str, enable_knowledge_qa:bool, temperature: float, enable_q_q_match:bool,
+               rerank_model_endpoint:str, llm_model_endpoint:str, aos_faq_index:str, aos_ug_index:str,
+               enable_knowledge_qa:bool, temperature: float, enable_q_q_match:bool,
                llm_model_id=None
                ):
     """
@@ -332,7 +267,7 @@ def main_entry(session_id:str, query_input:str, history:list, zh_embedding_model
     :param query_input: The query input.
     :param history: The history of the conversation.
     :param embedding_model_endpoint: The endpoint of the embedding model.
-    :param cross_model_endpoint: The endpoint of the cross model.
+    :param rerank_model_endpoint: The endpoint of the rerank model.
     :param llm_model_endpoint: The endpoint of the language model.
     :param llm_model_name: The name of the language model.
     :param aos_faq_index: The faq index of the AOS engine.
@@ -342,33 +277,66 @@ def main_entry(session_id:str, query_input:str, history:list, zh_embedding_model
 
     return: answer(str)
     """
+    debug_info = {
+        "query": query_input,
+        "query_parser_info": {},
+        "q_q_match_info": {},
+        "knowledge_qa_knn_recall": {},
+        "knowledge_qa_boolean_recall": {},
+        "knowledge_qa_combined_recall": {},
+        "knowledge_qa_cross_model_sort": {},
+        "knowledge_qa_llm": {},
+        "knowledge_qa_rerank": {},
+    }
+    contexts = []
+    if enable_knowledge_qa:
+        # 1. parse query 
+        parsed_query = parse_query(query_input, history, zh_embedding_model_endpoint, en_embedding_model_endpoint, debug_info)
+        # 2. query question match
+        if enable_q_q_match:
+            answer, sources = q_q_match(parsed_query, debug_info)
+            if answer and sources:
+                return answer, sources, contexts, debug_info
+        # 3. recall and rerank
+        knowledges = get_relevant_documents(parsed_query, rerank_model_endpoint, aos_faq_index, aos_ug_index, debug_info)
+        context_num = 2
+        sources = list(set([item["source"] for item in knowledges[:context_num]]))
+        contexts = knowledges[:context_num]
+        # 4. generate answer using question and recall_knowledge
+        parameters = {'temperature': temperature}
+        try:
+            generate_input = dict(
+                model_id = llm_model_id,
+                query = query_input,
+                contexts = knowledges[:context_num],
+                history=history,
+                region_name=region,
+                parameters=parameters,
+                context_num = context_num,
+                model_type="answer",
+                llm_model_endpoint=llm_model_endpoint
+            )
+            ret = llm_generate(**generate_input)
+            answer = ret['answer']
+            debug_info["knowledge_qa_llm"] = ret
+        except Exception as e:
+            logger.info(f'{traceback.format_exc()}')
+            answer = ""
+        query_type = QueryType.KnowledgeQuery
+    else:
+        query_type = QueryType.Conversation
 
-    answer, query_type, sources, recall_knowledge_str, debug_info = get_answer(query_input,
-               history,
-               zh_embedding_model_endpoint,
-               en_embedding_model_endpoint,
-               cross_model_endpoint,
-               rerank_model_endpoint,
-               llm_model_endpoint,
-               aos_faq_index,
-               aos_ug_index,
-               enable_knowledge_qa,
-               temperature,
-               enable_q_q_match,
-               llm_model_id=llm_model_id
-               )
-    # 7. update_session
+    # 5. update_session
     start = time.time()
     update_session(session_id=session_id, chat_session_table=chat_session_table, 
                    question=query_input, answer=answer, knowledge_sources=sources)
     elpase_time = time.time() - start
     logger.info(f'runing time of update_session : {elpase_time}s seconds')
 
-    # 8. log results
+    # 6. log results
     json_obj = {
         "session_id": session_id,
         "query": query_input,
-        "recall_knowledge_cross_str": recall_knowledge_str,
         "detect_query_type": str(query_type),
         "history": history,
         "chatbot_answer": answer,
@@ -376,11 +344,41 @@ def main_entry(session_id:str, query_input:str, history:list, zh_embedding_model
         "timestamp": int(time.time()),
         "debug_info": debug_info 
     }
-
     json_obj_str = json.dumps(json_obj, ensure_ascii=False)
     # logger.info(json_obj_str)
+    return answer, sources, contexts, debug_info
 
-    return answer, sources, debug_info 
+def retriever_entry(query_input:str, history:list, zh_embedding_model_endpoint:str, en_embedding_model_endpoint:str,
+               rerank_model_endpoint:str, aos_faq_index:str, aos_ug_index:str):
+    """
+    Entry point for the Lambda function.
+
+    :param session_id: The ID of the session.
+    :param query_input: The query input.
+    :param history: The history of the conversation.
+    :param embedding_model_endpoint: The endpoint of the embedding model.
+    :param rerank_model_endpoint: The endpoint of the rerank model.
+    :param aos_faq_index: The faq index of the AOS engine.
+    :param aos_ug_index: The ug index of the AOS engine.
+
+    return: doc(list)
+    """
+    debug_info = {
+        "query": query_input,
+        "query_parser_info": {},
+        "q_q_match_info": {},
+        "knowledge_qa_knn_recall": {},
+        "knowledge_qa_boolean_recall": {},
+        "knowledge_qa_combined_recall": {},
+        "knowledge_qa_cross_model_sort": {},
+        "knowledge_qa_llm": {},
+        "knowledge_qa_rerank": {},
+    }
+    # 1. parse query 
+    parsed_query = parse_query(query_input, history, zh_embedding_model_endpoint, en_embedding_model_endpoint, debug_info)
+    # 2. recall and rerank
+    knowledges = get_relevant_documents(parsed_query, rerank_model_endpoint, aos_faq_index, aos_ug_index, debug_info)
+    return knowledges, debug_info
 
 @handle_error
 def lambda_handler(event, context):
@@ -405,20 +403,37 @@ def lambda_handler(event, context):
         enable_debug = event_body['enable_debug']
     else:
         enable_debug = False
+    if "retrieval_only" in event_body:
+        retrieval_only = event_body['retrieval_only']
+    else:
+        retrieval_only = False
+    if "get_contexts" in event_body:
+        get_contexts = event_body['get_contexts']
+    else:
+        get_contexts = False
 
     history, question = process_input_messages(messages)
     role = "user"
     session_id = f"{role}_{int(request_timestamp)}"
     knowledge_qa_flag = True if model == 'knowledge_qa' else False
+
+    response = {'statusCode': 200, 'headers': {'Content-Type': 'application/json'}}
     
     main_entry_start = time.time() 
-    answer, sources, debug_info = main_entry(session_id, question, history, zh_embedding_endpoint, en_embedding_endpoint,
-                                             cross_endpoint, rerank_endpoint, llm_endpoint,
-                                             aos_faq_index, aos_ug_index, knowledge_qa_flag,
-                                             temperature, enable_q_q_match,
-                                             llm_model_id=llm_model_id
-                                             )
-    main_entry_elpase = time.time() - main_entry_start  
+    if retrieval_only:
+        knowledges, debug_info = retriever_entry(question, history,
+                                     zh_embedding_endpoint, en_embedding_endpoint, rerank_endpoint, aos_faq_index, aos_ug_index)
+        retrieval_response = {
+            "knowledges": knowledges
+        }
+        if enable_debug:
+            retrieval_response["debug_info"] = json.dumps(debug_info, ensure_ascii=False)
+        response["body"] = retrieval_response
+        return response
+    answer, sources, contexts, debug_info = main_entry(session_id, question, history, zh_embedding_endpoint, en_embedding_endpoint,
+                                             rerank_endpoint, llm_endpoint, aos_faq_index, aos_ug_index, knowledge_qa_flag,
+                                             temperature, enable_q_q_match, llm_model_id)
+    main_entry_elpase = time.time() - main_entry_start
     logger.info(f'runing time of main_entry : {main_entry_elpase}s seconds')
 
     llmbot_response = {
@@ -444,17 +459,10 @@ def lambda_handler(event, context):
         ]
     }
 
-    # 2. return rusult
+    # 2. return result
+    if get_contexts:
+        llmbot_response["contexts"] = json.dumps(contexts, ensure_ascii=False)
     if enable_debug:
-        return {
-            'statusCode': 200,
-            'headers': {'Content-Type': 'application/json'},
-            'body': json.dumps(llmbot_response),
-            'debug_info': json.dumps(debug_info)
-        }
-    else:
-        return {
-            'statusCode': 200,
-            'headers': {'Content-Type': 'application/json'},
-            'body': json.dumps(llmbot_response),
-        }
+        llmbot_response["debug_info"] = json.dumps(debug_info, ensure_ascii=False)
+    response["body"] = json.dumps(llmbot_response)
+    return response

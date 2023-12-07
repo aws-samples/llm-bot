@@ -441,7 +441,15 @@ def lambda_handler(event, context):
     session_id = f"{role}_{int(request_timestamp)}"
     knowledge_qa_flag = True if model == 'knowledge_qa' else False
 
-    response = {'statusCode': 200, 'headers': {'Content-Type': 'application/json'}}
+    response = {
+        "statusCode": 200,
+        "headers": {
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Headers": "Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "*"
+        }
+    }
     
     main_entry_start = time.time() 
     if retrieval_only:

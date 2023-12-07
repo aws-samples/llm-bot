@@ -155,15 +155,15 @@ def parse_query(query_input:str, history:list,
     parsed_query = run_preprocess(query_knowledge) 
     debug_info["query_parser_info"] = parsed_query
     if parsed_query["query_lang"] == "zh":
-        zh_query_similarity_embedding_prompt = query_knowledge
-        zh_query_relevance_embedding_prompt = "为这个句子生成表示以用于检索相关文章：" + query_knowledge
-        en_query_similarity_embedding_prompt = parsed_query["translated_text"]
-        en_query_relevance_embedding_prompt = "Represent this sentence for searching relevant passages: " + parsed_query["translated_text"]
+        parsed_query["zh_query"] = query_knowledge
+        parsed_query["en_query"] = parsed_query["translated_text"]
     elif parsed_query["query_lang"] == "en":
-        zh_query_similarity_embedding_prompt = parsed_query["translated_text"]
-        zh_query_relevance_embedding_prompt = "为这个句子生成表示以用于检索相关文章：" + parsed_query["translated_text"]
-        en_query_similarity_embedding_prompt = query_knowledge
-        en_query_relevance_embedding_prompt = "Represent this sentence for searching relevant passages: " + query_knowledge
+        parsed_query["zh_query"] = parsed_query["translated_text"]
+        parsed_query["en_query"] = query_knowledge
+    zh_query_similarity_embedding_prompt = parsed_query["zh_query"]
+    en_query_similarity_embedding_prompt = parsed_query["en_query"]
+    zh_query_relevance_embedding_prompt = "为这个句子生成表示以用于检索相关文章：" + parsed_query["zh_query"]
+    en_query_relevance_embedding_prompt = "Represent this sentence for searching relevant passages: " + parsed_query["en_query"]
     parsed_query["zh_query_similarity_embedding"] = SagemakerEndpointVectorOrCross(prompt=zh_query_similarity_embedding_prompt,
                                                                 endpoint_name=zh_embedding_model_endpoint, region_name=region,
                                                                 model_type="vector", stop=None)
@@ -206,7 +206,7 @@ def q_q_match(parsed_query, debug_info):
 def get_relevant_documents(parsed_query, rerank_model_endpoint:str, aos_faq_index:str, aos_ug_index:str, debug_info):
     # 1. get AOS knn recall 
     faq_result_num = 2
-    ug_result_num = 10
+    ug_result_num = 20
     start = time.time()
     opensearch_knn_results = []
     opensearch_knn_response = aos_client.search(index_name=aos_faq_index, query_type="knn",
@@ -216,6 +216,9 @@ def get_relevant_documents(parsed_query, rerank_model_endpoint:str, aos_faq_inde
                                                 query_term=parsed_query["en_query_relevance_embedding"], field="embedding", size=faq_result_num)
     opensearch_knn_results.extend(organize_faq_results(opensearch_knn_response, aos_faq_index)[:faq_result_num])
     # logger.info(json.dumps(opensearch_knn_response, ensure_ascii=False))
+    faq_recall_end_time = time.time()
+    elpase_time = faq_recall_end_time  - start
+    logger.info(f'runing time of faq recall : {elpase_time}s seconds')
     filter = None
     if parsed_query["is_api_query"]:
         filter = [{"term": {"metadata.is_api": True}}]
@@ -228,8 +231,9 @@ def get_relevant_documents(parsed_query, rerank_model_endpoint:str, aos_faq_inde
     opensearch_knn_results.extend(organize_ug_results(opensearch_knn_response, aos_ug_index)[:ug_result_num])
 
     debug_info["knowledge_qa_knn_recall"] = remove_redundancy_debug_info(opensearch_knn_results)
-    elpase_time = time.time() - start
-    logger.info(f'runing time of opensearch_knn : {elpase_time}s seconds')
+    ug_recall_end_time = time.time()
+    elpase_time = ug_recall_end_time  - faq_recall_end_time
+    logger.info(f'runing time of ug recall: {elpase_time}s seconds')
     
     # 2. get AOS invertedIndex recall
     opensearch_query_results = []
@@ -239,19 +243,33 @@ def get_relevant_documents(parsed_query, rerank_model_endpoint:str, aos_faq_inde
     
     rerank_pair = []
     for knowledge in recall_knowledge:
-        rerank_pair.append([parsed_query["query"], knowledge["content"]])
-    score_list = json.loads(SagemakerEndpointVectorOrCross(prompt=json.dumps(rerank_pair), endpoint_name=rerank_model_endpoint,
+        # rerank_pair.append([parsed_query["query"], knowledge["content"]][:1024])
+        rerank_pair.append([parsed_query["en_query"], knowledge["content"]][:1024*10])
+    en_score_list = json.loads(SagemakerEndpointVectorOrCross(prompt=json.dumps(rerank_pair), endpoint_name=rerank_model_endpoint,
+                                                        region_name=region, model_type="rerank", stop=None))
+    rerank_pair = []
+    for knowledge in recall_knowledge:
+        # rerank_pair.append([parsed_query["query"], knowledge["content"]][:1024])
+        rerank_pair.append([parsed_query["zh_query"], knowledge["content"]][:1024*10])
+    zh_score_list = json.loads(SagemakerEndpointVectorOrCross(prompt=json.dumps(rerank_pair), endpoint_name=rerank_model_endpoint,
                                                         region_name=region, model_type="rerank", stop=None))
     rerank_knowledge = []
-    for knowledge, score in zip(recall_knowledge, score_list):
+    for knowledge, score in zip(recall_knowledge, zh_score_list):
         # if score > 0:
-        knowledge["rerank_score"] = score
-        rerank_knowledge.append(knowledge)
+        new_knowledge = knowledge.copy()
+        new_knowledge["rerank_score"] = score
+        rerank_knowledge.append(new_knowledge)
+    for knowledge, score in zip(recall_knowledge, en_score_list):
+        # if score > 0:
+        new_knowledge = knowledge.copy()
+        new_knowledge["rerank_score"] = score
+        rerank_knowledge.append(new_knowledge)
     rerank_knowledge.sort(key=lambda x:x["rerank_score"], reverse=True)
     debug_info["knowledge_qa_rerank"] = rerank_knowledge
 
-    elpase_time = time.time() - start
-    logger.info(f'runing time of recall knowledge : {elpase_time}s seconds')
+    rerank_end_time = time.time()
+    elpase_time = rerank_end_time  - ug_recall_end_time
+    logger.info(f'runing time of rerank: {elpase_time}s seconds')
 
     return rerank_knowledge
 
@@ -290,21 +308,21 @@ def main_entry(session_id:str, query_input:str, history:list, zh_embedding_model
     }
     contexts = []
     if enable_knowledge_qa:
-        # 1. parse query 
-        parsed_query = parse_query(query_input, history, zh_embedding_model_endpoint, en_embedding_model_endpoint, debug_info)
-        # 2. query question match
-        if enable_q_q_match:
-            answer, sources = q_q_match(parsed_query, debug_info)
-            if answer and sources:
-                return answer, sources, contexts, debug_info
-        # 3. recall and rerank
-        knowledges = get_relevant_documents(parsed_query, rerank_model_endpoint, aos_faq_index, aos_ug_index, debug_info)
-        context_num = 2
-        sources = list(set([item["source"] for item in knowledges[:context_num]]))
-        contexts = knowledges[:context_num]
-        # 4. generate answer using question and recall_knowledge
-        parameters = {'temperature': temperature}
         try:
+            # 1. parse query 
+            parsed_query = parse_query(query_input, history, zh_embedding_model_endpoint, en_embedding_model_endpoint, debug_info)
+            # 2. query question match
+            if enable_q_q_match:
+                answer, sources = q_q_match(parsed_query, debug_info)
+                if answer and sources:
+                    return answer, sources, contexts, debug_info
+            # 3. recall and rerank
+            knowledges = get_relevant_documents(parsed_query, rerank_model_endpoint, aos_faq_index, aos_ug_index, debug_info)
+            context_num = 2
+            sources = list(set([item["source"] for item in knowledges[:context_num]]))
+            contexts = knowledges[:context_num]
+            # 4. generate answer using question and recall_knowledge
+            parameters = {'temperature': temperature}
             generate_input = dict(
                 model_id = llm_model_id,
                 query = query_input,
@@ -316,10 +334,16 @@ def main_entry(session_id:str, query_input:str, history:list, zh_embedding_model
                 model_type="answer",
                 llm_model_endpoint=llm_model_endpoint
             )
+
+            llm_start_time = time.time()
             ret = llm_generate(**generate_input)
+            llm_end_time = time.time()
+            elpase_time = llm_end_time  - llm_start_time
+            logger.info(f'runing time of llm: {elpase_time}s seconds')
             answer = ret['answer']
             debug_info["knowledge_qa_llm"] = ret
         except Exception as e:
+            logger.info(f'Exception Query: {query_input}')
             logger.info(f'{traceback.format_exc()}')
             answer = ""
         query_type = QueryType.KnowledgeQuery
@@ -427,8 +451,8 @@ def lambda_handler(event, context):
             "knowledges": knowledges
         }
         if enable_debug:
-            retrieval_response["debug_info"] = json.dumps(debug_info, ensure_ascii=False)
-        response["body"] = retrieval_response
+            retrieval_response["debug_info"] = debug_info
+        response["body"] = json.dumps(retrieval_response, ensure_ascii=False)
         return response
     answer, sources, contexts, debug_info = main_entry(session_id, question, history, zh_embedding_endpoint, en_embedding_endpoint,
                                              rerank_endpoint, llm_endpoint, aos_faq_index, aos_ug_index, knowledge_qa_flag,
@@ -461,8 +485,8 @@ def lambda_handler(event, context):
 
     # 2. return result
     if get_contexts:
-        llmbot_response["contexts"] = json.dumps(contexts, ensure_ascii=False)
+        llmbot_response["contexts"] = contexts
     if enable_debug:
-        llmbot_response["debug_info"] = json.dumps(debug_info, ensure_ascii=False)
+        llmbot_response["debug_info"] = debug_info
     response["body"] = json.dumps(llmbot_response)
     return response

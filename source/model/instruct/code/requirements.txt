@@ -1,4 +1,4 @@
 torch==2.0.1
-transformers==4.33.1
+transformers==4.36.0
 accelerate==0.20.3
 transformers_stream_generator

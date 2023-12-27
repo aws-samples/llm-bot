@@ -6,7 +6,7 @@ setup(
     version='0.1.0',
     packages=find_packages(exclude=[]),
     install_requires=[
-        'langchain==0.0.312',
+        'langchain==0.0.329',
         'beautifulsoup4==4.12.2',
         'requests-aws4auth==1.2.3',
         'boto3==1.28.84',
